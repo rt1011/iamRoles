@@ -1,5 +1,13 @@
 import boto3
 
+# Function to assume a role in another AWS account
+def jump_accts(acctID, stsClient, role_name='lamba1'):
+    out = stsClient.assume_role(
+        RoleArn=f'arn:aws:iam::{acctID}:role/{role_name}',
+        RoleSessionName='abc'
+    )
+    return out['Credentials']
+
 # Function to analyze the policy and extract conditions, denies, and modifications
 def analyze_policy(policy_document):
     explicit_denies = []
@@ -45,21 +53,21 @@ def analyze_policy(policy_document):
     
     return explicit_denies, conditions, can_modify_services
 
-# Function to list all IAM roles with their policies, tags, and analyze them
-def list_iam_roles_with_policies_and_tags(only_privileged=False):
-    roles_info = []
-    iam_client = boto3.client('iam')
-    sts_client = boto3.client('sts')
-
-    # Get the AWS account ID
-    account_id = sts_client.get_caller_identity()["Account"]
-
-    paginator = iam_client.get_paginator('list_roles')
+# Function to list IAM roles and their details for a given account using assumed credentials
+def list_iam_roles_for_account(credentials, only_privileged=False):
+    iam_client = boto3.client(
+        'iam',
+        aws_access_key_id=credentials['AccessKeyId'],
+        aws_secret_access_key=credentials['SecretAccessKey'],
+        aws_session_token=credentials['SessionToken']
+    )
     
+    roles_info = []
+    paginator = iam_client.get_paginator('list_roles')
+
     for page in paginator.paginate():
         for role in page['Roles']:
             role_name = role['RoleName']
-            role_arn = role['Arn']
 
             # Fetch the tags for the role
             tags_response = iam_client.list_role_tags(RoleName=role_name)
@@ -110,25 +118,45 @@ def list_iam_roles_with_policies_and_tags(only_privileged=False):
             # Store the role's information including tags and policy names
             roles_info.append({
                 'RoleName': role_name,
-                'AccountID': account_id,
                 'PolicyCount': len(attached_policies['AttachedPolicies']) + len(inline_policies['PolicyNames']),
-                'PolicyNames': ', '.join(all_policy_names),  # Convert list to comma-separated string
+                'PolicyNames': ', '.join(all_policy_names),
                 'ExplicitDeny': explicit_denies,
                 'Conditions': conditions,
                 'CanModifyServices': can_modify_services,
                 'Tags': tags
             })
-    
+
     return roles_info
 
-# Main function to gather IAM role data
-def main(only_privileged=False):
-    roles_info = list_iam_roles_with_policies_and_tags(only_privileged=only_privileged)
+# Main function to gather IAM roles from multiple accounts
+def gather_iam_roles_from_all_accounts(account_list, only_privileged=False):
+    sts_client = boto3.client('sts')
+    all_roles_info = {}
 
-    # Extract headers from the first role info dictionary
-    if roles_info:
-        field_names = list(roles_info[0].keys())
-        return [field_names, roles_info]
-    else:
-        return [[], []]
+    for acctID, role_name in account_list.items():
+        # Assume role in the target account
+        credentials = jump_accts(acctID, sts_client, role_name)
 
+        # Get the list of IAM roles and their details for the target account
+        roles_info = list_iam_roles_for_account(credentials, only_privileged)
+        
+        # Store the roles in a dictionary keyed by account ID
+        all_roles_info[acctID] = roles_info
+
+    return all_roles_info
+
+# Example account list: {'accountID': 'role_name'}
+account_list = {
+    '111111111111': 'role_name1',
+    '222222222222': 'role_name2',
+    '333333333333': 'role_name3'
+}
+
+# Set to True to only process privileged roles or False to process all roles
+only_privileged = False  # Change this to True for privileged roles only
+
+# Call the function to gather IAM roles from all accounts with a toggle for privileged roles
+all_roles = gather_iam_roles_from_all_accounts(account_list, only_privileged)
+
+# Now, you can process the all_roles dictionary as needed
+print(all_roles)

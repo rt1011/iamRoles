@@ -1,6 +1,5 @@
 import boto3
 import datetime
-import os
 
 # Function to assume a role in another AWS account
 def jump_accts(acctID, stsClient, role_name='lamba1'):
@@ -40,12 +39,10 @@ def analyze_policy(policy_document):
         
         # Check if the policy allows modifying services
         for action in actions:
-            # "*" means all actions, including modification
             if action == "*":
                 can_modify_services = True
                 break
 
-            # Check if the action contains any of the modifying verbs
             if any(verb in action for verb in modifying_actions):
                 can_modify_services = True
 
@@ -153,33 +150,3 @@ def gather_iam_roles_from_all_accounts(account_list, only_privileged=False):
     # Return field names and data
     return field_names, all_roles_info
 
-# Function to handle CloudShell vs Lambda environments
-def handle_execution(account_list, only_privileged=False):
-    # Call the function to gather IAM roles from all accounts
-    field_names, all_roles = gather_iam_roles_from_all_accounts(account_list, only_privileged)
-
-    # Determine the execution environment (CloudShell or Lambda)
-    if 'LAMBDA_TASK_ROOT' in os.environ:
-        # Lambda environment
-        filename = f"iam_roles_report_{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.csv"
-        s3folder = "iam_role/"
-        # Call the write_to_csv function (Lambda will write to S3)
-        write_to_csv(filename, field_names, all_roles, s3folder)
-    else:
-        # CloudShell environment
-        filename = f"/tmp/iam_roles_report_{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.csv"
-        # Call the write_to_csv function (CloudShell will write to local filesystem)
-        write_to_csv(filename, field_names, all_roles, '')
-
-# Example account list: {'accountID': 'role_name'}
-account_list = {
-    '111111111111': 'role_name1',
-    '222222222222': 'role_name2',
-    '333333333333': 'role_name3'
-}
-
-# Set to True to only process privileged roles or False to process all roles
-only_privileged = False  # Change this to True for privileged roles only
-
-# Call the handle_execution function
-handle_execution(account_list, only_privileged)

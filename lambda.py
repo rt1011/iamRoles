@@ -127,24 +127,32 @@ def list_iam_roles_with_policies_and_tags():
 def main(execution_env, s3folder=None):
     # Fetch IAM roles with policies and tags
     roles_info = list_iam_roles_with_policies_and_tags()
-    
-    # Return the roles_info so it can be used directly
-    return roles_info
+
+    # Extract the headers dynamically from the first element of iam_roles
+    if roles_info:
+        field_names = list(roles_info[0].keys())  # Extract keys from the first dictionary as headers
+
+        # Return field_names and roles_info as a list of two elements
+        return [field_names, roles_info]
+    else:
+        return [[], []]  # Return empty lists if no roles found
 
 # Example usage
 if __name__ == "__main__":
     # For CloudShell execution
     iam_roles = main(execution_env="cloudshell")
 
-    # Extract headers (field_names) dynamically from the first element of iam_roles
-    if iam_roles:
-        field_names = list(iam_roles[0].keys())  # Extract keys from the first dictionary as headers
+    # iam_roles[0] will contain the field names
+    field_names = iam_roles[0]
 
-        # Filename (this can be whatever you like, with the datetime appended as needed)
-        filename = f"iam_roles_report_{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.csv"
+    # iam_roles[1] will contain the data
+    data = iam_roles[1]
 
-        # S3 folder (if needed, or it can be None if writing locally)
-        s3folder = 'your-s3-folder'
+    # Filename (this can be whatever you like, with the datetime appended as needed)
+    filename = f"iam_roles_report_{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.csv"
 
-        # Now call the write_to_csv function
-        write_to_csv(filename=filename, field_names=field_names, output_dict=iam_roles, s3folder=s3folder)
+    # S3 folder (if needed, or it can be None if writing locally)
+    s3folder = 'your-s3-folder'
+
+    # Now call the write_to_csv function
+    write_to_csv(filename=filename, field_names=field_names, output_dict=data, s3folder=s3folder)

@@ -1,11 +1,9 @@
 import boto3
-import csv
-import os
+import datetime
 
 # Initialize AWS clients
 iam_client = boto3.client('iam')
 sts_client = boto3.client('sts')
-s3_client = boto3.client('s3')
 
 # Get the AWS account ID
 account_id = sts_client.get_caller_identity()["Account"]
@@ -125,47 +123,28 @@ def list_iam_roles_with_policies_and_tags():
     
     return roles_info
 
-# Function to write to CSV
-def write_to_csv(roles_info, file_path):
-    # Define CSV file headers
-    csv_headers = ['RoleName', 'AccountID', 'PolicyCount', 'PolicyNames', 'ExplicitDeny', 'Conditions', 'CanModifyServices', 'Tags']
-    
-    # Write to a CSV file in the specified path
-    with open(file_path, 'w', newline='') as csvfile:
-        writer = csv.DictWriter(csvfile, fieldnames=csv_headers)
-        writer.writeheader()
-        writer.writerows(roles_info)
-
 # Main function to handle both CloudShell and Lambda execution
-def main(execution_env, bucket_name=None, object_key=None):
+def main(execution_env, s3folder=None):
     # Fetch IAM roles with policies and tags
     roles_info = list_iam_roles_with_policies_and_tags()
-
-    if execution_env == "cloudshell":
-        # For CloudShell, save the CSV locally
-        file_path = '/tmp/iam_roles_info_with_tags_and_policies.csv'
-        write_to_csv(roles_info, file_path)
-        print(f"CSV file saved locally at {file_path}")
     
-    elif execution_env == "lambda" and bucket_name and object_key:
-        # For Lambda, save the CSV to /tmp and upload to S3
-        file_path = '/tmp/iam_roles_info_with_tags_and_policies.csv'
-        write_to_csv(roles_info, file_path)
-        s3_client.upload_file(file_path, bucket_name, object_key)
-        print(f"CSV file uploaded to s3://{bucket_name}/{object_key}")
+    # Return the roles_info so it can be used directly
+    return roles_info
 
-# Lambda handler function
-def lambda_handler(event, context):
-    bucket_name = 'your-s3-bucket-name'
-    object_key = 'output_file.csv'
-    main(execution_env="lambda", bucket_name=bucket_name, object_key=object_key)
-    
-    return {
-        'statusCode': 200,
-        'body': f'CSV file uploaded to s3://{bucket_name}/{object_key}'
-    }
-
-# Execute main in CloudShell
+# Example usage
 if __name__ == "__main__":
     # For CloudShell execution
-    main(execution_env="cloudshell")
+    iam_roles = main(execution_env="cloudshell")
+
+    # Extract headers (field_names) dynamically from the first element of iam_roles
+    if iam_roles:
+        field_names = list(iam_roles[0].keys())  # Extract keys from the first dictionary as headers
+
+        # Filename (this can be whatever you like, with the datetime appended as needed)
+        filename = f"iam_roles_report_{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.csv"
+
+        # S3 folder (if needed, or it can be None if writing locally)
+        s3folder = 'your-s3-folder'
+
+        # Now call the write_to_csv function
+        write_to_csv(filename=filename, field_names=field_names, output_dict=iam_roles, s3folder=s3folder)

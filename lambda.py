@@ -2,7 +2,7 @@ import boto3
 import csv
 import os
 
-# Initialize a session using boto3
+# Initialize AWS clients
 iam_client = boto3.client('iam')
 sts_client = boto3.client('sts')
 s3_client = boto3.client('s3')
@@ -126,33 +126,46 @@ def list_iam_roles_with_policies_and_tags():
     return roles_info
 
 # Function to write to CSV
-def write_to_csv(roles_info, bucket_name, object_key):
+def write_to_csv(roles_info, file_path):
     # Define CSV file headers
     csv_headers = ['RoleName', 'AccountID', 'PolicyCount', 'PolicyNames', 'ExplicitDeny', 'Conditions', 'CanModifyServices', 'Tags']
     
-    # Write to a CSV file in /tmp directory
-    csv_file_path = '/tmp/iam_roles_info_with_tags_and_policies.csv'
-    with open(csv_file_path, 'w', newline='') as csvfile:
+    # Write to a CSV file in the specified path
+    with open(file_path, 'w', newline='') as csvfile:
         writer = csv.DictWriter(csvfile, fieldnames=csv_headers)
         writer.writeheader()
         writer.writerows(roles_info)
 
-    # Upload the CSV to the specified S3 bucket
-    s3_client.upload_file(csv_file_path, bucket_name, object_key)
+# Main function to handle both CloudShell and Lambda execution
+def main(execution_env, bucket_name=None, object_key=None):
+    # Fetch IAM roles with policies and tags
+    roles_info = list_iam_roles_with_policies_and_tags()
 
-# Main Lambda handler
+    if execution_env == "cloudshell":
+        # For CloudShell, save the CSV locally
+        file_path = '/tmp/iam_roles_info_with_tags_and_policies.csv'
+        write_to_csv(roles_info, file_path)
+        print(f"CSV file saved locally at {file_path}")
+    
+    elif execution_env == "lambda" and bucket_name and object_key:
+        # For Lambda, save the CSV to /tmp and upload to S3
+        file_path = '/tmp/iam_roles_info_with_tags_and_policies.csv'
+        write_to_csv(roles_info, file_path)
+        s3_client.upload_file(file_path, bucket_name, object_key)
+        print(f"CSV file uploaded to s3://{bucket_name}/{object_key}")
+
+# Lambda handler function
 def lambda_handler(event, context):
-    # Replace 'your-s3-bucket-name' with your S3 bucket name and 'output_file.csv' with your desired object key
     bucket_name = 'your-s3-bucket-name'
     object_key = 'output_file.csv'
-    
-    # Fetch the IAM roles with policies and tags
-    roles_info = list_iam_roles_with_policies_and_tags()
-    
-    # Write the result to CSV and upload to S3
-    write_to_csv(roles_info, bucket_name, object_key)
+    main(execution_env="lambda", bucket_name=bucket_name, object_key=object_key)
     
     return {
         'statusCode': 200,
         'body': f'CSV file uploaded to s3://{bucket_name}/{object_key}'
     }
+
+# Execute main in CloudShell
+if __name__ == "__main__":
+    # For CloudShell execution
+    main(execution_env="cloudshell")

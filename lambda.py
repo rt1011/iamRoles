@@ -1,4 +1,6 @@
 import boto3
+import datetime
+import os
 
 # Function to assume a role in another AWS account
 def jump_accts(acctID, stsClient, role_name='lamba1'):
@@ -47,10 +49,6 @@ def analyze_policy(policy_document):
             if any(verb in action for verb in modifying_actions):
                 can_modify_services = True
 
-        # If resource is "*", then the role has unrestricted access to all resources
-        if "*" in resources:
-            can_modify_services = True
-    
     return explicit_denies, conditions, can_modify_services
 
 # Function to list IAM roles and their details for a given account using assumed credentials
@@ -131,7 +129,7 @@ def list_iam_roles_for_account(credentials, only_privileged=False):
 # Main function to gather IAM roles from multiple accounts
 def gather_iam_roles_from_all_accounts(account_list, only_privileged=False):
     sts_client = boto3.client('sts')
-    all_roles_info = {}
+    all_roles_info = []
 
     for acctID, role_name in account_list.items():
         # Assume role in the target account
@@ -139,11 +137,39 @@ def gather_iam_roles_from_all_accounts(account_list, only_privileged=False):
 
         # Get the list of IAM roles and their details for the target account
         roles_info = list_iam_roles_for_account(credentials, only_privileged)
-        
-        # Store the roles in a dictionary keyed by account ID
-        all_roles_info[acctID] = roles_info
 
-    return all_roles_info
+        # Add account ID to each role's info
+        for role_info in roles_info:
+            role_info['AccountID'] = acctID
+
+        all_roles_info.extend(roles_info)
+
+    # Extract field names (CSV headers) from the first element of the list
+    if all_roles_info:
+        field_names = list(all_roles_info[0].keys())
+    else:
+        field_names = []
+
+    # Return field names and data
+    return field_names, all_roles_info
+
+# Function to handle CloudShell vs Lambda environments
+def handle_execution(account_list, only_privileged=False):
+    # Call the function to gather IAM roles from all accounts
+    field_names, all_roles = gather_iam_roles_from_all_accounts(account_list, only_privileged)
+
+    # Determine the execution environment (CloudShell or Lambda)
+    if 'LAMBDA_TASK_ROOT' in os.environ:
+        # Lambda environment
+        filename = f"iam_roles_report_{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.csv"
+        s3folder = "iam_role/"
+        # Call the write_to_csv function (Lambda will write to S3)
+        write_to_csv(filename, field_names, all_roles, s3folder)
+    else:
+        # CloudShell environment
+        filename = f"/tmp/iam_roles_report_{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.csv"
+        # Call the write_to_csv function (CloudShell will write to local filesystem)
+        write_to_csv(filename, field_names, all_roles, '')
 
 # Example account list: {'accountID': 'role_name'}
 account_list = {
@@ -155,8 +181,5 @@ account_list = {
 # Set to True to only process privileged roles or False to process all roles
 only_privileged = False  # Change this to True for privileged roles only
 
-# Call the function to gather IAM roles from all accounts with a toggle for privileged roles
-all_roles = gather_iam_roles_from_all_accounts(account_list, only_privileged)
-
-# Now, you can process the all_roles dictionary as needed
-print(all_roles)
+# Call the handle_execution function
+handle_execution(account_list, only_privileged)

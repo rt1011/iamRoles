@@ -72,7 +72,7 @@ def list_iam_roles_for_account(credentials=None, only_privileged=False):
 
             # Fetch the tags for the role
             tags_response = iam_client.list_role_tags(RoleName=role_name)
-            tags = {tag['Key']: tag['Value'] for tag in tags_response.get('Tags', [])}
+            tags = {tag['Key']: tag['Value']} for tag in tags_response.get('Tags', [])
 
             # Apply filter for privileged roles only if the flag is set
             if only_privileged and tags.get('Privileged') != 'Yes':
@@ -187,3 +187,8 @@ def handle_execution(account_list=None, only_privileged=False):
         s3folder = "iam_role/"
         write_to_csv(filename, field_names, all_roles_info, s3folder)
 
+# __main__ block for direct execution in CloudShell
+if __name__ == '__main__':
+    # You can define account_list or use None for the current account
+    account_list = None  # or provide account list
+    handle_execution(account_list)

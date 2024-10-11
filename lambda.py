@@ -50,7 +50,7 @@ def analyze_policy(policy_document):
     return explicit_denies, conditions, can_modify_services
 
 # Function to list IAM roles and their details for a given account using credentials
-def list_iam_roles_for_account(credentials=None, only_privileged=False):
+def list_iam_roles_for_account(credentials=None, only_privileged=False, print_flag=False, acct_name=''):
     if credentials:
         # Use assumed role credentials
         iam_client = boto3.client(
@@ -69,6 +69,10 @@ def list_iam_roles_for_account(credentials=None, only_privileged=False):
     for page in paginator.paginate():
         for role in page['Roles']:
             role_name = role['RoleName']
+            
+            # Print role information if print_flag is True
+            if print_flag:
+                print(f"Processing role '{role_name}' in account '{acct_name}'")
 
             # Fetch the tags for the role
             tags_response = iam_client.list_role_tags(RoleName=role_name)
@@ -137,16 +141,18 @@ def detect_environment():
         return "cloudshell"
 
 # Main function to gather IAM roles from multiple accounts
-def gather_iam_roles_from_all_accounts(account_list=None, only_privileged=False):
+def gather_iam_roles_from_all_accounts(account_list=None, only_privileged=False, print_flag=False):
     sts_client = boto3.client('sts')
     all_roles_info = []
 
     if account_list:
         # If account list is provided, assume role for each account
         for acctID in account_list:
+            if print_flag:
+                print(f"Assuming role for account '{acctID}'")
             out = jump_accts(acctID, sts_client)  # Use jump_accts to assume role
             credentials = out['Credentials']  # Extract credentials from the output
-            roles_info = list_iam_roles_for_account(credentials, only_privileged)
+            roles_info = list_iam_roles_for_account(credentials, only_privileged, print_flag, acctID)
 
             # Add account ID to each role's info
             for role_info in roles_info:
@@ -155,7 +161,10 @@ def gather_iam_roles_from_all_accounts(account_list=None, only_privileged=False)
             all_roles_info.extend(roles_info)
     else:
         # No account list provided, use current account credentials
-        roles_info = list_iam_roles_for_account(None, only_privileged)
+        acct_id = sts_client.get_caller_identity()['Account']
+        if print_flag:
+            print(f"Using default credentials for account '{acct_id}'")
+        roles_info = list_iam_roles_for_account(None, only_privileged, print_flag, acct_id)
         all_roles_info.extend(roles_info)
 
     # Extract field names (CSV headers) from the first element of the list
@@ -168,12 +177,12 @@ def gather_iam_roles_from_all_accounts(account_list=None, only_privileged=False)
     return field_names, all_roles_info
 
 # Handle file writing based on environment
-def handle_execution(account_list=None, only_privileged=False):
+def handle_execution(account_list=None, only_privileged=False, print_flag=False):
     # Detect the environment (CloudShell or Lambda)
     environment = detect_environment()
 
     # Gather the IAM roles data
-    field_names, all_roles_info = gather_iam_roles_from_all_accounts(account_list, only_privileged)
+    field_names, all_roles_info = gather_iam_roles_from_all_accounts(account_list, only_privileged, print_flag)
 
     # Define the filename
     filename = f"iam_roles_report_{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.csv"
@@ -191,4 +200,4 @@ def handle_execution(account_list=None, only_privileged=False):
 if __name__ == '__main__':
     # You can define account_list or use None for the current account
     account_list = None  # or provide account list
-    handle_execution(account_list)
+    handle_execution(account_list, only_privileged=False, print_flag=True)

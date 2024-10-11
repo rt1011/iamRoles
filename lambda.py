@@ -76,7 +76,7 @@ def list_iam_roles_for_account(credentials=None, only_privileged=False, print_fl
 
             # Fetch the tags for the role
             tags_response = iam_client.list_role_tags(RoleName=role_name)
-            tags = {tag['Key']: tag['Value']} for tag in tags_response.get('Tags', [])
+            tags = {tag['Key']: tag['Value'] for tag in tags_response.get('Tags', [])}  # Corrected syntax
 
             # Apply filter for privileged roles only if the flag is set
             if only_privileged and tags.get('Privileged') != 'Yes':

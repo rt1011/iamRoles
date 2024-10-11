@@ -1,15 +1,3 @@
-"""
-    "iam:ListRoles",
-                "iam:ListAttachedRolePolicies",
-                "iam:ListRolePolicies",
-                "iam:GetRolePolicy",
-                "iam:GetPolicy",
-                "iam:GetPolicyVersion",
-                "iam:ListRoleTags"
-"""
-
-
-
 import boto3
 import datetime
 import os
@@ -27,31 +15,35 @@ def analyze_policy(policy_document):
     explicit_denies = []
     conditions = []
     can_modify_services = False
+    actions = []
 
     # List of modifying actions that indicate resource modification capabilities
     modifying_actions = ['Create', 'Put', 'Post', 'Update', 'Delete', 'Modify', 'Attach', 'Detach', 'Start', 'Stop', 'Reboot', 'Run']
 
     for statement in policy_document.get('Statement', []):
         effect = statement.get('Effect')
-        actions = statement.get('Action', [])
+        statement_actions = statement.get('Action', [])
         resources = statement.get('Resource', [])
         
         # Ensure actions and resources are lists
-        if isinstance(actions, str):
-            actions = [actions]
+        if isinstance(statement_actions, str):
+            statement_actions = [statement_actions]
         if isinstance(resources, str):
             resources = [resources]
         
         # Check for explicit deny
         if effect == 'Deny':
-            explicit_denies.append(actions)
+            explicit_denies.append(statement_actions)
         
         # Check for conditions
         if 'Condition' in statement:
             conditions.append(statement['Condition'])
         
+        # Add actions to the actions list
+        actions.extend(statement_actions)
+
         # Check if the policy allows modifying services
-        for action in actions:
+        for action in statement_actions:
             if action == "*":
                 can_modify_services = True
                 break
@@ -59,7 +51,7 @@ def analyze_policy(policy_document):
             if any(verb in action for verb in modifying_actions):
                 can_modify_services = True
 
-    return explicit_denies, conditions, can_modify_services
+    return explicit_denies, conditions, can_modify_services, actions
 
 # Function to list IAM roles and their details for a given account using credentials
 def list_iam_roles_for_account(credentials=None, only_privileged=False, print_flag=False, acct_name=''):
@@ -88,7 +80,7 @@ def list_iam_roles_for_account(credentials=None, only_privileged=False, print_fl
 
             # Fetch the tags for the role
             tags_response = iam_client.list_role_tags(RoleName=role_name)
-            tags = {tag['Key']: tag['Value'] for tag in tags_response.get('Tags', [])}  # Corrected syntax
+            tags = {tag['Key']: tag['Value'] for tag in tags_response.get('Tags', [])}
 
             # Apply filter for privileged roles only if the flag is set
             if only_privileged and tags.get('Privileged') != 'Yes':
@@ -103,40 +95,31 @@ def list_iam_roles_for_account(credentials=None, only_privileged=False, print_fl
             inline_policy_names = inline_policies['PolicyNames']
 
             # Combine all policy names
-            all_policy_names = attached_policy_names + inline_policy_names
+            all_policy_names = attached_policies + inline_policy_names
 
-            # Variables to track explicit deny, conditions, and modification actions
+            # Variables to track explicit deny, conditions, modification actions, and actions
             explicit_denies = []
             conditions = []
             can_modify_services = False
+            policy_actions = []
 
-            # Analyze attached policies
-            for policy in attached_policies['AttachedPolicies']:
-                policy_arn = policy['PolicyArn']
-                policy_version = iam_client.get_policy(PolicyArn=policy_arn)['Policy']['DefaultVersionId']
-                policy_document = iam_client.get_policy_version(PolicyArn=policy_arn, VersionId=policy_version)['PolicyVersion']['Document']
-                denies, conds, can_modify = analyze_policy(policy_document)
-
-                explicit_denies.extend(denies)
-                conditions.extend(conds)
-                if can_modify:
-                    can_modify_services = True
-
-            # Analyze inline policies
+            # Inline policies: Collect actions
             for policy_name in inline_policies['PolicyNames']:
                 policy_document = iam_client.get_role_policy(RoleName=role_name, PolicyName=policy_name)['PolicyDocument']
-                denies, conds, can_modify = analyze_policy(policy_document)
+                denies, conds, can_modify, actions = analyze_policy(policy_document)
 
                 explicit_denies.extend(denies)
                 conditions.extend(conds)
+                policy_actions.append(f"{policy_name}[{', '.join(actions)}]")  # Only actions from inline policies
                 if can_modify:
                     can_modify_services = True
 
-            # Store the role's information including tags and policy names
+            # Store the role's information including tags, policy names, and actions for inline policies only
             roles_info.append({
                 'RoleName': role_name,
                 'PolicyCount': len(attached_policies['AttachedPolicies']) + len(inline_policies['PolicyNames']),
                 'PolicyNames': ', '.join(all_policy_names),
+                'Actions': '; '.join(policy_actions),  # Only include actions for inline policies
                 'ExplicitDeny': explicit_denies,
                 'Conditions': conditions,
                 'CanModifyServices': can_modify_services,
@@ -199,14 +182,8 @@ def handle_execution(account_list=None, only_privileged=False, print_flag=False)
     # Define the filename
     filename = f"iam_roles_report_{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.csv"
 
-    if environment == "cloudshell":
-        # For CloudShell, save to /tmp/ (or another CloudShell accessible directory)
-        filepath = f"/tmp/{filename}"
-        write_to_csv(filepath, field_names, all_roles_info, '')
-    else:
-        # For Lambda, save to S3 (using your existing write_to_csv function that handles S3)
-        s3folder = "iam_role/"
-        write_to_csv(filename, field_names, all_roles_info, s3folder)
+    # Call the write_to_csv function (now only passing filename)
+    write_to_csv(filename, field_names, all_roles_info, '')
 
 # __main__ block for direct execution in CloudShell
 if __name__ == '__main__':

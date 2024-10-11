@@ -1,13 +1,14 @@
 import boto3
 import datetime
+import os
 
 # Function to assume a role in another AWS account
-def jump_accts(acctID, stsClient, role_name='lamba1'):
+def jump_accts(acctID, stsClient):
     out = stsClient.assume_role(
-        RoleArn=f'arn:aws:iam::{acctID}:role/{role_name}',
+        RoleArn=f'arn:aws:iam::{acctID}:role/lambda1',
         RoleSessionName='abc'
     )
-    return out['Credentials']
+    return out  # Return the entire 'out' object
 
 # Function to analyze the policy and extract conditions, denies, and modifications
 def analyze_policy(policy_document):
@@ -48,14 +49,19 @@ def analyze_policy(policy_document):
 
     return explicit_denies, conditions, can_modify_services
 
-# Function to list IAM roles and their details for a given account using assumed credentials
-def list_iam_roles_for_account(credentials, only_privileged=False):
-    iam_client = boto3.client(
-        'iam',
-        aws_access_key_id=credentials['AccessKeyId'],
-        aws_secret_access_key=credentials['SecretAccessKey'],
-        aws_session_token=credentials['SessionToken']
-    )
+# Function to list IAM roles and their details for a given account using credentials
+def list_iam_roles_for_account(credentials=None, only_privileged=False):
+    if credentials:
+        # Use assumed role credentials
+        iam_client = boto3.client(
+            'iam',
+            aws_access_key_id=credentials['AccessKeyId'],
+            aws_secret_access_key=credentials['SecretAccessKey'],
+            aws_session_token=credentials['SessionToken']
+        )
+    else:
+        # Use default credentials for the same account
+        iam_client = boto3.client('iam')
     
     roles_info = []
     paginator = iam_client.get_paginator('list_roles')
@@ -123,22 +129,33 @@ def list_iam_roles_for_account(credentials, only_privileged=False):
 
     return roles_info
 
+# Detect environment (CloudShell or Lambda)
+def detect_environment():
+    if 'LAMBDA_TASK_ROOT' in os.environ:
+        return "lambda"
+    else:
+        return "cloudshell"
+
 # Main function to gather IAM roles from multiple accounts
-def gather_iam_roles_from_all_accounts(account_list, only_privileged=False):
+def gather_iam_roles_from_all_accounts(account_list=None, only_privileged=False):
     sts_client = boto3.client('sts')
     all_roles_info = []
 
-    for acctID, role_name in account_list.items():
-        # Assume role in the target account
-        credentials = jump_accts(acctID, sts_client, role_name)
+    if account_list:
+        # If account list is provided, assume role for each account
+        for acctID in account_list:
+            out = jump_accts(acctID, sts_client)  # Use jump_accts to assume role
+            credentials = out['Credentials']  # Extract credentials from the output
+            roles_info = list_iam_roles_for_account(credentials, only_privileged)
 
-        # Get the list of IAM roles and their details for the target account
-        roles_info = list_iam_roles_for_account(credentials, only_privileged)
+            # Add account ID to each role's info
+            for role_info in roles_info:
+                role_info['AccountID'] = acctID
 
-        # Add account ID to each role's info
-        for role_info in roles_info:
-            role_info['AccountID'] = acctID
-
+            all_roles_info.extend(roles_info)
+    else:
+        # No account list provided, use current account credentials
+        roles_info = list_iam_roles_for_account(None, only_privileged)
         all_roles_info.extend(roles_info)
 
     # Extract field names (CSV headers) from the first element of the list
@@ -147,6 +164,26 @@ def gather_iam_roles_from_all_accounts(account_list, only_privileged=False):
     else:
         field_names = []
 
-    # Return field names and data
+    # Return field names and data as a tuple
     return field_names, all_roles_info
+
+# Handle file writing based on environment
+def handle_execution(account_list=None, only_privileged=False):
+    # Detect the environment (CloudShell or Lambda)
+    environment = detect_environment()
+
+    # Gather the IAM roles data
+    field_names, all_roles_info = gather_iam_roles_from_all_accounts(account_list, only_privileged)
+
+    # Define the filename
+    filename = f"iam_roles_report_{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.csv"
+
+    if environment == "cloudshell":
+        # For CloudShell, save to /tmp/ (or another CloudShell accessible directory)
+        filepath = f"/tmp/{filename}"
+        write_to_csv(filepath, field_names, all_roles_info, '')
+    else:
+        # For Lambda, save to S3 (using your existing write_to_csv function that handles S3)
+        s3folder = "iam_role/"
+        write_to_csv(filename, field_names, all_roles_info, s3folder)
 

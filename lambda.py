@@ -1,3 +1,15 @@
+"""
+    "iam:ListRoles",
+                "iam:ListAttachedRolePolicies",
+                "iam:ListRolePolicies",
+                "iam:GetRolePolicy",
+                "iam:GetPolicy",
+                "iam:GetPolicyVersion",
+                "iam:ListRoleTags"
+"""
+
+
+
 import boto3
 import datetime
 import os

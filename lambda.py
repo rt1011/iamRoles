@@ -185,30 +185,32 @@ def process_role(iam_client, role, only_privileged, print_flag, acct_name):
     return roles_info
 
 # Parallel execution of accounts to improve performance
+# Parallel execution of accounts to improve performance
 def gather_iam_roles_from_all_accounts(account_list=None, only_privileged=False, print_flag=False):
     sts_client = boto3.client('sts', config=client_config)
     all_roles_info = []
 
-    # If account_list is None or empty, process the current account using default credentials
-    if not account_list:
-        print("Processing current account...")
-        account_id = sts_client.get_caller_identity().get('Account')
-        roles_info = list_iam_roles_for_account(None, only_privileged, print_flag, account_id)
-        all_roles_info.extend(roles_info)
+    # Parallel processing for accounts
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        future_to_account = {executor.submit(process_account, acctID, sts_client, only_privileged, print_flag): acctID for acctID in account_list}
+
+        for future in as_completed(future_to_account):
+            acctID = future_to_account[future]
+            try:
+                roles_info = future.result()
+                if roles_info:
+                    all_roles_info.extend(roles_info)  # Collect role info for each account
+            except Exception as e:
+                print(f"Error processing account {acctID}: {e}")
+
+    # Define the field names (CSV headers)
+    if all_roles_info:
+        field_names = list(all_roles_info[0].keys())  # Extract field names from the first role's info
     else:
-        with ThreadPoolExecutor(max_workers=5) as executor:  # Parallel processing for multiple accounts
-            future_to_account = {executor.submit(process_account, acctID, sts_client, only_privileged, print_flag): acctID for acctID in account_list}
+        field_names = []  # Handle case where no roles are found
 
-            for future in as_completed(future_to_account):
-                acctID = future_to_account[future]
-                try:
-                    roles_info = future.result()
-                    if roles_info:
-                        all_roles_info.extend(roles_info)  # Avoid NoneType here
-                except Exception as e:
-                    print(f"Error processing account {acctID}: {e}")
+    return field_names, all_roles_info  # Return both field names and the role data
 
-    return all_roles_info
 
 def process_account(acctID, sts_client, only_privileged, print_flag):
     out = jump_accts(acctID, sts_client)

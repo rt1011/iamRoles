@@ -30,6 +30,9 @@ def analyze_policy(policy_document):
     can_modify_services = False
     actions = []
 
+    if policy_document is None:
+        return explicit_denies, conditions, can_modify_services, actions  # Avoid NoneType errors
+    
     # List of modifying actions that indicate resource modification capabilities
     modifying_actions = ['Create', 'Put', 'Post', 'Update', 'Delete', 'Modify', 'Attach', 'Detach', 'Start', 'Stop', 'Reboot', 'Run']
 
@@ -66,9 +69,21 @@ def fetch_policy(policy_arn, iam_client):
     if policy_arn in policy_cache:
         return policy_cache[policy_arn]
     
-    policy_version = iam_client.get_policy(PolicyArn=policy_arn)['Policy']['DefaultVersionId']
-    policy_document = iam_client.get_policy_version(PolicyArn=policy_arn, VersionId=policy_version)['PolicyVersion']['Document']
-    policy_cache[policy_arn] = policy_document
+    # Fetch policy document with error handling for None responses
+    policy = iam_client.get_policy(PolicyArn=policy_arn)
+    if not policy or 'Policy' not in policy:
+        return None  # Avoid returning None if the policy is invalid or missing
+
+    policy_version = policy['Policy']['DefaultVersionId']
+    policy_version_data = iam_client.get_policy_version(PolicyArn=policy_arn, VersionId=policy_version)
+    
+    if not policy_version_data or 'PolicyVersion' not in policy_version_data:
+        return None  # Avoid NoneType errors
+    
+    policy_document = policy_version_data['PolicyVersion'].get('Document', None)
+    if policy_document is not None:
+        policy_cache[policy_arn] = policy_document
+    
     return policy_document
 
 # Function to list IAM roles and their details for a given account using credentials
@@ -88,11 +103,17 @@ def list_iam_roles_for_account(credentials=None, only_privileged=False, print_fl
     with ThreadPoolExecutor(max_workers=5) as executor:
         role_futures = []
         for page in paginator.paginate():
+            # Ensure the page is valid and not None
+            if not page or 'Roles' not in page:
+                continue  # Avoid iterating over NoneType
+            
             for role in page['Roles']:
                 role_futures.append(executor.submit(process_role, iam_client, role, only_privileged, print_flag, acct_name))
         
         for future in as_completed(role_futures):
-            roles_info.extend(future.result())
+            role_result = future.result()
+            if role_result:
+                roles_info.extend(role_result)  # Avoid NoneType here
 
     return roles_info
 
@@ -107,15 +128,24 @@ def process_role(iam_client, role, only_privileged, print_flag, acct_name):
 
     # Fetch the tags for the role
     tags_response = iam_client.list_role_tags(RoleName=role_name)
-    tags = {tag['Key']: tag['Value'] for tag in tags_response.get('Tags', [])}
+    if not tags_response or 'Tags' not in tags_response:
+        tags = {}  # Ensure no NoneType for empty or missing tags
+    else:
+        tags = {tag['Key']: tag['Value'] for tag in tags_response.get('Tags', [])}
 
     # Apply filter for privileged roles only if the flag is set
     if only_privileged and tags.get('Privileged') != 'Yes':
-        return []
+        return []  # Return an empty list if filtering out non-privileged roles
 
     # Fetch attached policies and inline policies
     attached_policies = iam_client.list_attached_role_policies(RoleName=role_name)
     inline_policies = iam_client.list_role_policies(RoleName=role_name)
+
+    if not attached_policies or 'AttachedPolicies' not in attached_policies:
+        attached_policies = {'AttachedPolicies': []}  # Avoid NoneType
+
+    if not inline_policies or 'PolicyNames' not in inline_policies:
+        inline_policies = {'PolicyNames': []}  # Avoid NoneType
 
     # Variables to track explicit deny, conditions, modification actions, and actions
     explicit_denies = []
@@ -125,7 +155,10 @@ def process_role(iam_client, role, only_privileged, print_flag, acct_name):
 
     # Fetch inline policies and actions (optimized for inline policies only)
     for policy_name in inline_policies['PolicyNames']:
-        policy_document = iam_client.get_role_policy(RoleName=role_name, PolicyName=policy_name)['PolicyDocument']
+        policy_document = iam_client.get_role_policy(RoleName=role_name, PolicyName=policy_name).get('PolicyDocument', None)
+        if not policy_document:
+            continue  # Skip policies that don't exist
+
         denies, conds, can_modify, actions = analyze_policy(policy_document)
 
         explicit_denies.extend(denies)
@@ -160,7 +193,8 @@ def gather_iam_roles_from_all_accounts(account_list=None, only_privileged=False,
             acctID = future_to_account[future]
             try:
                 roles_info = future.result()
-                all_roles_info.extend(roles_info)
+                if roles_info:
+                    all_roles_info.extend(roles_info)  # Avoid NoneType here
             except Exception as e:
                 print(f"Error processing account {acctID}: {e}")
 
@@ -169,7 +203,10 @@ def gather_iam_roles_from_all_accounts(account_list=None, only_privileged=False,
 # Process a single account
 def process_account(acctID, sts_client, only_privileged, print_flag):
     out = jump_accts(acctID, sts_client)
-    credentials = out['Credentials']
+    credentials = out.get('Credentials', None)
+    if not credentials:
+        return []  # Return an empty list if unable to assume role
+
     return list_iam_roles_for_account(credentials, only_privileged, print_flag, acctID)
 
 # Handle file writing based on environment
@@ -183,6 +220,7 @@ def handle_execution(account_list=None, only_privileged=False, print_flag=False)
 def detect_environment():
     return "lambda" if 'LAMBDA_TASK_ROOT' in os.environ else "cloudshell"
 
+# Main entry point for running in CloudShell or Lambda
 if __name__ == '__main__':
     account_list = None  # Set account_list if necessary
     handle_execution(account_list, only_privileged=False, print_flag=True)

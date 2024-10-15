@@ -189,25 +189,32 @@ def gather_iam_roles_from_all_accounts(account_list=None, only_privileged=False,
     sts_client = boto3.client('sts', config=client_config)
     all_roles_info = []
 
-    with ThreadPoolExecutor(max_workers=5) as executor:  # Parallel processing
-        future_to_account = {executor.submit(process_account, acctID, sts_client, only_privileged, print_flag): acctID for acctID in account_list}
+    # If account_list is None or empty, process the current account using default credentials
+    if not account_list:
+        print("Processing current account...")
+        account_id = sts_client.get_caller_identity().get('Account')
+        roles_info = list_iam_roles_for_account(None, only_privileged, print_flag, account_id)
+        all_roles_info.extend(roles_info)
+    else:
+        with ThreadPoolExecutor(max_workers=5) as executor:  # Parallel processing for multiple accounts
+            future_to_account = {executor.submit(process_account, acctID, sts_client, only_privileged, print_flag): acctID for acctID in account_list}
 
-        for future in as_completed(future_to_account):
-            acctID = future_to_account[future]
-            try:
-                roles_info = future.result()
-                if roles_info:
-                    all_roles_info.extend(roles_info)  # Avoid NoneType here
-            except Exception as e:
-                print(f"Error processing account {acctID}: {e}")
+            for future in as_completed(future_to_account):
+                acctID = future_to_account[future]
+                try:
+                    roles_info = future.result()
+                    if roles_info:
+                        all_roles_info.extend(roles_info)  # Avoid NoneType here
+                except Exception as e:
+                    print(f"Error processing account {acctID}: {e}")
 
     return all_roles_info
 
-# Process a single account
 def process_account(acctID, sts_client, only_privileged, print_flag):
     out = jump_accts(acctID, sts_client)
     credentials = out.get('Credentials', None)
     if not credentials:
+        print(f"Failed to assume role for account {acctID}")
         return []  # Return an empty list if unable to assume role
 
     return list_iam_roles_for_account(credentials, only_privileged, print_flag, acctID)
@@ -217,7 +224,9 @@ def handle_execution(account_list=None, only_privileged=False, print_flag=False)
     environment = detect_environment()
     field_names, all_roles_info = gather_iam_roles_from_all_accounts(account_list, only_privileged, print_flag)
     filename = f"iam_roles_report_{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.csv"
-    write_to_csv(filename, field_names, all_roles_info, '')
+    
+    # Use your write_to_csv function here, passing only the filename (without full path)
+    write_to_csv(filename, field_names, all_roles_info, '')  # Assuming write_to_csv is properly defined elsewhere
 
 # Detect environment (CloudShell or Lambda)
 def detect_environment():

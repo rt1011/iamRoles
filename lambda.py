@@ -18,10 +18,14 @@ client_config = Config(
 # Function to assume a role in another AWS account
 def jump_accts(acctID, stsClient):
     try:
+        print(f"Assuming role for account {acctID}")
         out = stsClient.assume_role(
             RoleArn=f'arn:aws:iam::{acctID}:role/lambda1',
             RoleSessionName='abc'
         )
+        if not out or 'Credentials' not in out:
+            print(f"Failed to assume role for account {acctID}: Missing credentials")
+            return None
         return out  # Return the entire 'out' object
     except Exception as e:
         print(f"Error assuming role in account {acctID}: {e}")
@@ -35,9 +39,9 @@ def analyze_policy(policy_document):
     actions = []
 
     if policy_document is None:
+        print("Policy document is None")
         return explicit_denies, conditions, can_modify_services, actions  # Avoid NoneType errors
     
-    # List of modifying actions that indicate resource modification capabilities
     modifying_actions = ['Create', 'Put', 'Post', 'Update', 'Delete', 'Modify', 'Attach', 'Detach', 'Start', 'Stop', 'Reboot', 'Run']
 
     for statement in policy_document.get('Statement', []):
@@ -76,13 +80,15 @@ def fetch_policy(policy_arn, iam_client):
     try:
         policy = iam_client.get_policy(PolicyArn=policy_arn)
         if not policy or 'Policy' not in policy:
-            return None  # Avoid returning None if the policy is invalid or missing
+            print(f"Policy {policy_arn} is missing or invalid")
+            return None
 
         policy_version = policy['Policy']['DefaultVersionId']
         policy_version_data = iam_client.get_policy_version(PolicyArn=policy_arn, VersionId=policy_version)
         
         if not policy_version_data or 'PolicyVersion' not in policy_version_data:
-            return None  # Avoid NoneType errors
+            print(f"Policy version data missing for {policy_arn}")
+            return None
         
         policy_document = policy_version_data['PolicyVersion'].get('Document', None)
         if policy_document is not None:
@@ -95,8 +101,9 @@ def fetch_policy(policy_arn, iam_client):
 
 # Function to list IAM roles and their details for a given account using credentials
 def list_iam_roles_for_account(credentials=None, only_privileged=False, print_flag=False, acct_name=''):
-    if credentials:
-        try:
+    try:
+        if credentials:
+            print(f"Using assumed credentials for account {acct_name}")
             iam_client = boto3.client(
                 'iam',
                 aws_access_key_id=credentials['AccessKeyId'],
@@ -104,34 +111,33 @@ def list_iam_roles_for_account(credentials=None, only_privileged=False, print_fl
                 aws_session_token=credentials['SessionToken'],
                 config=client_config
             )
-        except Exception as e:
-            print(f"Error creating IAM client with credentials for account {acct_name}: {e}")
-            return []
-    else:
-        iam_client = boto3.client('iam', config=client_config)
+        else:
+            print(f"Using default credentials for account {acct_name}")
+            iam_client = boto3.client('iam', config=client_config)
     
-    roles_info = []
-    try:
+        roles_info = []
         paginator = iam_client.get_paginator('list_roles')
-    except Exception as e:
-        print(f"Error getting IAM roles for account {acct_name}: {e}")
-        return []
-
-    with ThreadPoolExecutor(max_workers=5) as executor:
-        role_futures = []
-        for page in paginator.paginate():
-            if not page or 'Roles' not in page:
-                continue
-            
-            for role in page['Roles']:
-                role_futures.append(executor.submit(process_role, iam_client, role, only_privileged, print_flag, acct_name))
         
-        for future in as_completed(role_futures):
-            role_result = future.result()
-            if role_result:
-                roles_info.extend(role_result)
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            role_futures = []
+            for page in paginator.paginate():
+                if not page or 'Roles' not in page:
+                    print(f"No roles found in page for account {acct_name}")
+                    continue
+                
+                for role in page['Roles']:
+                    role_futures.append(executor.submit(process_role, iam_client, role, only_privileged, print_flag, acct_name))
+            
+            for future in as_completed(role_futures):
+                role_result = future.result()
+                if role_result:
+                    roles_info.extend(role_result)
 
-    return roles_info
+        return roles_info
+
+    except Exception as e:
+        print(f"Error listing IAM roles for account {acct_name}: {e}")
+        return []
 
 # Process individual roles (runs in parallel for each role)
 def process_role(iam_client, role, only_privileged, print_flag, acct_name):
@@ -143,12 +149,13 @@ def process_role(iam_client, role, only_privileged, print_flag, acct_name):
 
     try:
         tags_response = iam_client.list_role_tags(RoleName=role_name)
-        tags = {tag['Key']: tag['Value']} for tag in tags_response.get('Tags', [])}
+        tags = {tag['Key']: tag['Value'] for tag in tags_response.get('Tags', [])}
     except Exception as e:
         print(f"Error getting tags for role '{role_name}' in account '{acct_name}': {e}")
         tags = {}
 
     if only_privileged and tags.get('Privileged') != 'Yes':
+        print(f"Skipping non-privileged role '{role_name}' in account '{acct_name}'")
         return []
 
     try:
@@ -168,6 +175,7 @@ def process_role(iam_client, role, only_privileged, print_flag, acct_name):
         try:
             policy_document = iam_client.get_role_policy(RoleName=role_name, PolicyName=policy_name).get('PolicyDocument', None)
             if not policy_document:
+                print(f"Inline policy '{policy_name}' for role '{role_name}' is missing")
                 continue
 
             denies, conds, can_modify, actions = analyze_policy(policy_document)
@@ -213,6 +221,7 @@ def gather_iam_roles_from_all_accounts(account_list=None, only_privileged=False,
     if all_roles_info:
         field_names = list(all_roles_info[0].keys())
     else:
+        print("No roles found across accounts")
         field_names = []
 
     return field_names, all_roles_info
@@ -233,6 +242,10 @@ def process_account(acctID, sts_client, only_privileged, print_flag):
 # Handle file writing based on environment
 def handle_execution(account_list=None, only_privileged=False, print_flag=False):
     field_names, all_roles_info = gather_iam_roles_from_all_accounts(account_list, only_privileged, print_flag)
+    if not field_names:
+        print("No field names to write to CSV")
+        return
+
     filename = f"iam_roles_report_{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.csv"
     write_to_csv(filename, field_names, all_roles_info, '')
 

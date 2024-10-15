@@ -30,7 +30,7 @@ def analyze_policy(policy_document):
     can_modify_services = False
     actions = []
 
-    if policy_document is None:
+    if not policy_document or 'Statement' not in policy_document:
         return explicit_denies, conditions, can_modify_services, actions  # Avoid NoneType errors
     
     # List of modifying actions that indicate resource modification capabilities
@@ -119,7 +119,10 @@ def list_iam_roles_for_account(credentials=None, only_privileged=False, print_fl
 
 # Process individual roles (runs in parallel for each role)
 def process_role(iam_client, role, only_privileged, print_flag, acct_name):
-    role_name = role['RoleName']
+    role_name = role.get('RoleName')
+    if not role_name:
+        return []  # Skip processing if role name is missing
+    
     roles_info = []
 
     # Print role information if print_flag is True

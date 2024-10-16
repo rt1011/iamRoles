@@ -3,9 +3,7 @@ import datetime
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from botocore.config import Config
-
-# Cache for policy details to avoid redundant API calls
-policy_cache = {}
+import csv
 
 # AWS SDK optimization: Configure retries and session timeouts
 client_config = Config(
@@ -61,7 +59,7 @@ def analyze_policy(policy_document):
         if any(verb in action for action in statement_actions for verb in modifying_actions):
             can_modify_services = True
 
-    return explicit_denies, conditions, can_modify_services, sorted(actions)  # Sorting actions here
+    return explicit_denies, conditions, can_modify_services, sorted(actions)
 
 # Fetch managed policy actions
 def fetch_managed_policy_actions(iam_client, policy_arn):
@@ -69,7 +67,7 @@ def fetch_managed_policy_actions(iam_client, policy_arn):
         policy_version = iam_client.get_policy(PolicyArn=policy_arn)['Policy']['DefaultVersionId']
         policy_document = iam_client.get_policy_version(PolicyArn=policy_arn, VersionId=policy_version)['PolicyVersion']['Document']
         explicit_denies, conditions, can_modify_services, actions = analyze_policy(policy_document)
-        return sorted(actions)  # Sort actions
+        return sorted(actions)
     except Exception as e:
         print(f"Error fetching managed policy actions for {policy_arn}: {e}")
         return []
@@ -103,30 +101,34 @@ def process_role(iam_client, role, only_privileged, print_flag, acct_name):
         policy_actions = []
 
         # Analyze inline policies
-        for policy_name in sorted(inline_policies['PolicyNames']):  # Sort inline policy names
+        for policy_name in inline_policies['PolicyNames']:
             policy_document = iam_client.get_role_policy(RoleName=role_name, PolicyName=policy_name).get('PolicyDocument', None)
             if policy_document:
                 denies, conds, can_modify, actions = analyze_policy(policy_document)
                 explicit_denies.extend(denies)
                 conditions.extend(conds)
-                policy_actions.append(f"{policy_name}[{', '.join(sorted(actions))}]")  # Sort actions within each policy
+                policy_actions.append(f"{policy_name}[{', '.join(sorted(actions))}]")
                 if can_modify:
                     can_modify_services = True
 
         # Fetch and analyze attached managed policies
-        for policy in sorted(attached_policies.get('AttachedPolicies', []), key=lambda p: p['PolicyName']):  # Sort attached policies
+        for policy in attached_policies.get('AttachedPolicies', []):
             actions = fetch_managed_policy_actions(iam_client, policy['PolicyArn'])
-            policy_actions.append(f"{policy['PolicyName']}[{', '.join(actions)}]")  # Sort actions
+            policy_actions.append(f"{policy['PolicyName']}[{', '.join(actions)}]")
 
-        # Sort policy actions
-        policy_actions_sorted = sorted(policy_actions)
+        # Merge inline and managed policies, then sort them
+        all_policy_names = sorted(inline_policies['PolicyNames'] + [p['PolicyName'] for p in attached_policies['AttachedPolicies']])
+
+        # Handle long text in CSV output by concatenating all policies and actions
+        merged_policies = '; '.join(all_policy_names)
+        merged_actions = '; '.join(policy_actions)  # Use semicolons to avoid breaking lines in CSV
 
         # Append role info
         roles_info.append({
             'RoleName': role_name,
-            'PolicyCount': len(attached_policies.get('AttachedPolicies', [])) + len(inline_policies['PolicyNames']),
-            'PolicyNames': ', '.join([p['PolicyName'] for p in sorted(attached_policies.get('AttachedPolicies', []), key=lambda p: p['PolicyName'])] + sorted(inline_policies['PolicyNames'])),  # Sort policy names
-            'Actions': '; '.join(policy_actions_sorted),  # Sorted policy names with actions
+            'PolicyCount': len(attached_policies['AttachedPolicies']) + len(inline_policies['PolicyNames']),
+            'PolicyNames': merged_policies,  # Sorted and merged policy names
+            'Actions': merged_actions,  # Sorted and merged actions
             'ExplicitDeny': explicit_denies,
             'Conditions': conditions,
             'CanModifyServices': can_modify_services,
@@ -206,7 +208,7 @@ def list_iam_roles_for_account(credentials=None, only_privileged=False, print_fl
 def gather_iam_roles_from_all_accounts(account_list=None, only_privileged=False, print_flag=False):
     if not account_list or len(account_list) == 0:
         print("No account list provided, running for the local account.")
-        field_names, all_roles_info = process_account(None, None, only_privileged, print_flag)
+                field_names, all_roles_info = process_account(None, None, only_privileged, print_flag)
         return field_names, all_roles_info
 
     print(f"Gathering IAM roles for accounts: {account_list}")
@@ -244,6 +246,18 @@ def handle_execution(account_list=None, only_privileged=False, print_flag=False)
     filename = f"iam_roles_report_{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.csv"
     write_to_csv(filename, field_names, all_roles_info, '')
 
+# Write data to CSV
+def write_to_csv(filename, field_names, all_roles_info, s3bucket):
+    try:
+        with open(f'/tmp/{filename}', mode='w', newline='') as file:
+            writer = csv.DictWriter(file, fieldnames=field_names)
+            writer.writeheader()
+            for role_info in all_roles_info:
+                writer.writerow(role_info)
+        print(f"CSV file {filename} created successfully in /tmp/")
+    except Exception as e:
+        print(f"Error writing to CSV: {e}")
+
 # Detect environment (CloudShell or Lambda)
 def detect_environment():
     return "lambda" if 'LAMBDA_TASK_ROOT' in os.environ else "cloudshell"
@@ -251,3 +265,4 @@ def detect_environment():
 if __name__ == '__main__':
     account_list = None  # Empty account list to trigger local account processing
     handle_execution(account_list, only_privileged=False, print_flag=True)
+

@@ -118,17 +118,18 @@ def process_role(iam_client, role, only_privileged, print_flag, acct_name):
             conditions.extend(conds)
             policy_actions.append(f"{policy['PolicyName']}[{', '.join(actions)}]")
 
-        # Merge and sort inline and managed policies
-        all_policy_names = sorted(inline_policies['PolicyNames'] + [p['PolicyName'] for p in attached_policies['AttachedPolicies']])
+        # Merge and sort all policies (inline + attached managed policies)
+        all_policy_names = inline_policies['PolicyNames'] + [p['PolicyName'] for p in attached_policies['AttachedPolicies']]
+        sorted_policy_names = sorted(all_policy_names)  # Sort after merging
 
         # Handle long text in CSV output by concatenating all policies and actions into a single line
-        merged_policies = ', '.join(all_policy_names)  # Using commas to separate sorted policy names
+        merged_policies = ', '.join(sorted_policy_names)  # Using commas to separate sorted policy names
         merged_actions = ', '.join(policy_actions)  # Using commas to separate sorted actions
 
         # Append role info
         roles_info.append({
             'RoleName': role_name,
-            'PolicyCount': len(attached_policies['AttachedPolicies']) + len(inline_policies['PolicyNames']),
+            'PolicyCount': len(sorted_policy_names),
             'PolicyNames': merged_policies,  # Sorted and merged policy names
             'Actions': merged_actions,  # Sorted and merged actions
             'ExplicitDeny': ', '.join(sorted(set(explicit_denies))),  # Deduplicate and sort explicit denies

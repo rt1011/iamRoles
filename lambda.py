@@ -124,7 +124,7 @@ def process_role(iam_client, role, only_privileged, print_flag, acct_name):
 
         # Handle long text in CSV output by concatenating all policies and actions into a single line
         merged_policies = ', '.join(sorted_policy_names)  # Using commas to separate sorted policy names
-        merged_actions = '|'.join(policy_actions)  # Using pipe "|" to ensure actions stay in a single cell
+        merged_actions = ' | '.join(policy_actions)  # Using " | " to ensure actions stay in a single cell
 
         # Append role info
         roles_info.append({

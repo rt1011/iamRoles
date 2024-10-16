@@ -31,73 +31,21 @@ def jump_accts(acctID, stsClient):
         print(f"Error assuming role in account {acctID}: {e}")
         return None
 
-# Optimized function to analyze policy
-def analyze_policy(policy_document):
-    explicit_denies = []
-    conditions = []
-    can_modify_services = False
-    actions = []
+# Process a single account
+def process_account(acctID, sts_client, only_privileged, print_flag):
+    print(f"Processing account {acctID}")
+    out = jump_accts(acctID, sts_client)
+    if out is None:
+        print(f"Error assuming role for account {acctID}")
+        return []  # Return empty list if role assumption fails
 
-    if policy_document is None:
-        print("Policy document is None")
-        return explicit_denies, conditions, can_modify_services, actions  # Avoid NoneType errors
-    
-    modifying_actions = ['Create', 'Put', 'Post', 'Update', 'Delete', 'Modify', 'Attach', 'Detach', 'Start', 'Stop', 'Reboot', 'Run']
+    credentials = out.get('Credentials', None)
+    if credentials is None:
+        print(f"Error: No credentials for account {acctID}")
+        return []
 
-    for statement in policy_document.get('Statement', []):
-        effect = statement.get('Effect')
-        statement_actions = statement.get('Action', [])
-        resources = statement.get('Resource', [])
-        
-        # Ensure actions and resources are lists
-        if isinstance(statement_actions, str):
-            statement_actions = [statement_actions]
-        if isinstance(resources, str):
-            resources = [resources]
-        
-        # Check for explicit deny
-        if effect == 'Deny':
-            explicit_denies.append(statement_actions)
-        
-        # Check for conditions
-        if 'Condition' in statement:
-            conditions.append(statement['Condition'])
-        
-        # Add actions to the actions list
-        actions.extend(statement_actions)
-
-        # Check if the policy allows modifying services
-        if any(verb in action for action in statement_actions for verb in modifying_actions):
-            can_modify_services = True
-
-    return explicit_denies, conditions, can_modify_services, actions
-
-# Fetch and cache policy details to avoid redundant API calls
-def fetch_policy(policy_arn, iam_client):
-    if policy_arn in policy_cache:
-        return policy_cache[policy_arn]
-    
-    try:
-        policy = iam_client.get_policy(PolicyArn=policy_arn)
-        if not policy or 'Policy' not in policy:
-            print(f"Policy {policy_arn} is missing or invalid")
-            return None
-
-        policy_version = policy['Policy']['DefaultVersionId']
-        policy_version_data = iam_client.get_policy_version(PolicyArn=policy_arn, VersionId=policy_version)
-        
-        if not policy_version_data or 'PolicyVersion' not in policy_version_data:
-            print(f"Policy version data missing for {policy_arn}")
-            return None
-        
-        policy_document = policy_version_data['PolicyVersion'].get('Document', None)
-        if policy_document is not None:
-            policy_cache[policy_arn] = policy_document
-        
-        return policy_document
-    except Exception as e:
-        print(f"Error fetching policy {policy_arn}: {e}")
-        return None
+    # List IAM roles in the account with assumed credentials
+    return list_iam_roles_for_account(credentials, only_privileged, print_flag, acctID)
 
 # Function to list IAM roles and their details for a given account using credentials
 def list_iam_roles_for_account(credentials=None, only_privileged=False, print_flag=False, acct_name=''):
@@ -139,70 +87,13 @@ def list_iam_roles_for_account(credentials=None, only_privileged=False, print_fl
         print(f"Error listing IAM roles for account {acct_name}: {e}")
         return []
 
-# Process individual roles (runs in parallel for each role)
-def process_role(iam_client, role, only_privileged, print_flag, acct_name):
-    role_name = role['RoleName']
-    roles_info = []
-
-    if print_flag:
-        print(f"Processing role '{role_name}' in account '{acct_name}'")
-
-    try:
-        tags_response = iam_client.list_role_tags(RoleName=role_name)
-        tags = {tag['Key']: tag['Value'] for tag in tags_response.get('Tags', [])}
-    except Exception as e:
-        print(f"Error getting tags for role '{role_name}' in account '{acct_name}': {e}")
-        tags = {}
-
-    if only_privileged and tags.get('Privileged') != 'Yes':
-        print(f"Skipping non-privileged role '{role_name}' in account '{acct_name}'")
-        return []
-
-    try:
-        attached_policies = iam_client.list_attached_role_policies(RoleName=role_name)
-        inline_policies = iam_client.list_role_policies(RoleName=role_name)
-    except Exception as e:
-        print(f"Error listing policies for role '{role_name}' in account '{acct_name}': {e}")
-        attached_policies = {'AttachedPolicies': []}
-        inline_policies = {'PolicyNames': []}
-
-    explicit_denies = []
-    conditions = []
-    can_modify_services = False
-    policy_actions = []
-
-    for policy_name in inline_policies['PolicyNames']:
-        try:
-            policy_document = iam_client.get_role_policy(RoleName=role_name, PolicyName=policy_name).get('PolicyDocument', None)
-            if not policy_document:
-                print(f"Inline policy '{policy_name}' for role '{role_name}' is missing")
-                continue
-
-            denies, conds, can_modify, actions = analyze_policy(policy_document)
-
-            explicit_denies.extend(denies)
-            conditions.extend(conds)
-            policy_actions.append(f"{policy_name}[{', '.join(actions)}]")
-            if can_modify:
-                can_modify_services = True
-        except Exception as e:
-            print(f"Error analyzing inline policy '{policy_name}' for role '{role_name}' in account '{acct_name}': {e}")
-
-    roles_info.append({
-        'RoleName': role_name,
-        'PolicyCount': len(attached_policies['AttachedPolicies']) + len(inline_policies['PolicyNames']),
-        'PolicyNames': ', '.join([p['PolicyName'] for p in attached_policies['AttachedPolicies']] + inline_policies['PolicyNames']),
-        'Actions': '; '.join(policy_actions),
-        'ExplicitDeny': explicit_denies,
-        'Conditions': conditions,
-        'CanModifyServices': can_modify_services,
-        'Tags': tags
-    })
-
-    return roles_info
-
 # Parallel execution of accounts to improve performance
 def gather_iam_roles_from_all_accounts(account_list=None, only_privileged=False, print_flag=False):
+    if not account_list or not isinstance(account_list, list) or len(account_list) == 0:
+        print("Error: account_list is either None or empty. Please provide valid AWS account IDs.")
+        return [], []  # Return empty values if account_list is invalid
+
+    print(f"Gathering IAM roles for accounts: {account_list}")
     sts_client = boto3.client('sts', config=client_config)
     all_roles_info = []
 
@@ -215,6 +106,8 @@ def gather_iam_roles_from_all_accounts(account_list=None, only_privileged=False,
                 roles_info = future.result()
                 if roles_info:
                     all_roles_info.extend(roles_info)
+                else:
+                    print(f"No roles found for account {acctID}")
             except Exception as e:
                 print(f"Error processing account {acctID}: {e}")
 
@@ -226,24 +119,13 @@ def gather_iam_roles_from_all_accounts(account_list=None, only_privileged=False,
 
     return field_names, all_roles_info
 
-# Process a single account
-def process_account(acctID, sts_client, only_privileged, print_flag):
-    out = jump_accts(acctID, sts_client)
-    if out is None:
-        return []
-
-    credentials = out.get('Credentials', None)
-    if credentials is None:
-        print(f"Error: No credentials for account {acctID}")
-        return []
-
-    return list_iam_roles_for_account(credentials, only_privileged, print_flag, acctID)
-
 # Handle file writing based on environment
 def handle_execution(account_list=None, only_privileged=False, print_flag=False):
+    # Debugging output for account_list
+    print(f"Starting execution with accounts: {account_list}")
     field_names, all_roles_info = gather_iam_roles_from_all_accounts(account_list, only_privileged, print_flag)
     if not field_names:
-        print("No field names to write to CSV")
+        print("No field names found to write to CSV. Exiting.")
         return
 
     filename = f"iam_roles_report_{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.csv"
@@ -254,5 +136,5 @@ def detect_environment():
     return "lambda" if 'LAMBDA_TASK_ROOT' in os.environ else "cloudshell"
 
 if __name__ == '__main__':
-    account_list = None  # Set account_list if necessary
+    account_list = ['123456789012', '098765432109']  # Example AWS account IDs
     handle_execution(account_list, only_privileged=False, print_flag=True)

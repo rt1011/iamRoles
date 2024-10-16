@@ -69,7 +69,7 @@ def fetch_managed_policy_actions(iam_client, policy_arn):
         policy_version = iam_client.get_policy(PolicyArn=policy_arn)['Policy']['DefaultVersionId']
         policy_document = iam_client.get_policy_version(PolicyArn=policy_arn, VersionId=policy_version)['PolicyVersion']['Document']
         explicit_denies, conditions, can_modify_services, actions = analyze_policy(policy_document)
-        return actions
+        return sorted(actions)  # Sort actions
     except Exception as e:
         print(f"Error fetching managed policy actions for {policy_arn}: {e}")
         return []
@@ -85,7 +85,7 @@ def process_role(iam_client, role, only_privileged, print_flag, acct_name):
     try:
         # Fetch tags for the role
         tags_response = iam_client.list_role_tags(RoleName=role_name)
-        tags = {tag['Key']: tag['Value'] for tag in tags_response.get('Tags', [])}
+        tags = {tag['Key']: tag['Value']} for tag in tags_response.get('Tags', [])}
 
         # Skip if the role is not privileged and we're filtering for privileged roles
         if only_privileged and tags.get('Privileged') != 'Yes':
@@ -103,27 +103,30 @@ def process_role(iam_client, role, only_privileged, print_flag, acct_name):
         policy_actions = []
 
         # Analyze inline policies
-        for policy_name in inline_policies['PolicyNames']:
+        for policy_name in sorted(inline_policies['PolicyNames']):  # Sort inline policy names
             policy_document = iam_client.get_role_policy(RoleName=role_name, PolicyName=policy_name).get('PolicyDocument', None)
             if policy_document:
                 denies, conds, can_modify, actions = analyze_policy(policy_document)
                 explicit_denies.extend(denies)
                 conditions.extend(conds)
-                policy_actions.append(f"{policy_name}[{', '.join(actions)}]")
+                policy_actions.append(f"{policy_name}[{', '.join(sorted(actions))}]")  # Sort actions within each policy
                 if can_modify:
                     can_modify_services = True
 
         # Fetch and analyze attached managed policies
-        for policy in attached_policies.get('AttachedPolicies', []):
+        for policy in sorted(attached_policies.get('AttachedPolicies', []), key=lambda p: p['PolicyName']):  # Sort attached policies
             actions = fetch_managed_policy_actions(iam_client, policy['PolicyArn'])
-            policy_actions.append(f"{policy['PolicyName']}[{', '.join(actions)}]")
+            policy_actions.append(f"{policy['PolicyName']}[{', '.join(actions)}]")  # Sort actions
+
+        # Sort policy actions
+        policy_actions_sorted = sorted(policy_actions)
 
         # Append role info
         roles_info.append({
             'RoleName': role_name,
             'PolicyCount': len(attached_policies.get('AttachedPolicies', [])) + len(inline_policies['PolicyNames']),
-            'PolicyNames': ', '.join([p['PolicyName'] for p in attached_policies.get('AttachedPolicies', [])] + inline_policies['PolicyNames']),
-            'Actions': '; '.join(policy_actions),  # policy_name[action1, action2]
+            'PolicyNames': ', '.join([p['PolicyName'] for p in sorted(attached_policies.get('AttachedPolicies', []), key=lambda p: p['PolicyName'])] + sorted(inline_policies['PolicyNames'])),  # Sort policy names
+            'Actions': '; '.join(policy_actions_sorted),  # Sorted policy names with actions
             'ExplicitDeny': explicit_denies,
             'Conditions': conditions,
             'CanModifyServices': can_modify_services,

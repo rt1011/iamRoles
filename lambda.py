@@ -35,21 +35,25 @@ def jump_accts(acctID, stsClient):
 def process_account(acctID, sts_client, only_privileged, print_flag):
     if acctID is None:
         print("No account ID provided, running for the local account.")
-        return list_iam_roles_for_account(None, only_privileged, print_flag, 'local')
+        roles_info = list_iam_roles_for_account(None, only_privileged, print_flag, 'local')
+        field_names = list(roles_info[0].keys()) if roles_info else []
+        return field_names, roles_info
 
     print(f"Processing account {acctID}")
     out = jump_accts(acctID, sts_client)
     if out is None:
         print(f"Error assuming role for account {acctID}")
-        return []  # Return empty list if role assumption fails
+        return [], []  # Return empty list for both field_names and roles_info if role assumption fails
 
     credentials = out.get('Credentials', None)
     if credentials is None:
         print(f"Error: No credentials for account {acctID}")
-        return []
+        return [], []  # Return empty values
 
     # List IAM roles in the account with assumed credentials
-    return list_iam_roles_for_account(credentials, only_privileged, print_flag, acctID)
+    roles_info = list_iam_roles_for_account(credentials, only_privileged, print_flag, acctID)
+    field_names = list(roles_info[0].keys()) if roles_info else []
+    return field_names, roles_info
 
 # Function to list IAM roles and their details for a given account using credentials
 def list_iam_roles_for_account(credentials=None, only_privileged=False, print_flag=False, acct_name=''):
@@ -95,16 +99,13 @@ def list_iam_roles_for_account(credentials=None, only_privileged=False, print_fl
 def gather_iam_roles_from_all_accounts(account_list=None, only_privileged=False, print_flag=False):
     if not account_list or len(account_list) == 0:
         print("No account list provided, running for the local account.")
-        all_roles_info = process_account(None, None, only_privileged, print_flag)
-        if all_roles_info:
-            field_names = list(all_roles_info[0].keys()) if len(all_roles_info) > 0 else []
-        else:
-            field_names = []
+        field_names, all_roles_info = process_account(None, None, only_privileged, print_flag)
         return field_names, all_roles_info
 
     print(f"Gathering IAM roles for accounts: {account_list}")
     sts_client = boto3.client('sts', config=client_config)
     all_roles_info = []
+    field_names = []
 
     with ThreadPoolExecutor(max_workers=5) as executor:
         future_to_account = {executor.submit(process_account, acctID, sts_client, only_privileged, print_flag): acctID for acctID in account_list}
@@ -112,19 +113,15 @@ def gather_iam_roles_from_all_accounts(account_list=None, only_privileged=False,
         for future in as_completed(future_to_account):
             acctID = future_to_account[future]
             try:
-                roles_info = future.result()
+                acct_field_names, roles_info = future.result()
                 if roles_info:
                     all_roles_info.extend(roles_info)
+                    if not field_names:  # Set field_names once, based on the first valid result
+                        field_names = acct_field_names
                 else:
                     print(f"No roles found for account {acctID}")
             except Exception as e:
                 print(f"Error processing account {acctID}: {e}")
-
-    if all_roles_info:
-        field_names = list(all_roles_info[0].keys())
-    else:
-        print("No roles found across accounts")
-        field_names = []
 
     return field_names, all_roles_info
 

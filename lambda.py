@@ -49,7 +49,7 @@ def analyze_policy(policy_document):
             resources = [resources]
         
         if effect == 'Deny':
-            explicit_denies.append(statement_actions)
+            explicit_denies.extend(statement_actions)
 
         if 'Condition' in statement:
             conditions.append(statement['Condition'])
@@ -61,16 +61,16 @@ def analyze_policy(policy_document):
 
     return explicit_denies, conditions, can_modify_services, sorted(set(actions))  # Sort and deduplicate actions
 
-# Fetch managed policy actions
+# Fetch managed policy actions (including denies)
 def fetch_managed_policy_actions(iam_client, policy_arn):
     try:
         policy_version = iam_client.get_policy(PolicyArn=policy_arn)['Policy']['DefaultVersionId']
         policy_document = iam_client.get_policy_version(PolicyArn=policy_arn, VersionId=policy_version)['PolicyVersion']['Document']
         explicit_denies, conditions, can_modify_services, actions = analyze_policy(policy_document)
-        return sorted(set(actions))  # Sort and deduplicate actions
+        return explicit_denies, sorted(set(actions)), conditions  # Sort and deduplicate actions and denies
     except Exception as e:
         print(f"Error fetching managed policy actions for {policy_arn}: {e}")
-        return []
+        return [], [], []
 
 # Process individual roles
 def process_role(iam_client, role, only_privileged, print_flag, acct_name):
@@ -113,15 +113,17 @@ def process_role(iam_client, role, only_privileged, print_flag, acct_name):
 
         # Fetch and analyze attached managed policies
         for policy in attached_policies.get('AttachedPolicies', []):
-            actions = fetch_managed_policy_actions(iam_client, policy['PolicyArn'])
+            denies, actions, conds = fetch_managed_policy_actions(iam_client, policy['PolicyArn'])
+            explicit_denies.extend(denies)
+            conditions.extend(conds)
             policy_actions.append(f"{policy['PolicyName']}[{', '.join(actions)}]")
 
         # Merge and sort inline and managed policies
         all_policy_names = sorted(inline_policies['PolicyNames'] + [p['PolicyName'] for p in attached_policies['AttachedPolicies']])
 
         # Handle long text in CSV output by concatenating all policies and actions into a single line
-        merged_policies = ' | '.join(all_policy_names)  # Using a pipe symbol to separate policies
-        merged_actions = ' | '.join(policy_actions)  # Using a pipe symbol to separate actions
+        merged_policies = ', '.join(all_policy_names)  # Using commas to separate sorted policy names
+        merged_actions = ', '.join(policy_actions)  # Using commas to separate sorted actions
 
         # Append role info
         roles_info.append({
@@ -129,8 +131,8 @@ def process_role(iam_client, role, only_privileged, print_flag, acct_name):
             'PolicyCount': len(attached_policies['AttachedPolicies']) + len(inline_policies['PolicyNames']),
             'PolicyNames': merged_policies,  # Sorted and merged policy names
             'Actions': merged_actions,  # Sorted and merged actions
-            'ExplicitDeny': explicit_denies,
-            'Conditions': conditions,
+            'ExplicitDeny': ', '.join(sorted(set(explicit_denies))),  # Deduplicate and sort explicit denies
+            'Conditions': ', '.join([str(c) for c in conditions]),  # Join conditions into a single string
             'CanModifyServices': can_modify_services,
             'Tags': tags
         })
@@ -206,8 +208,7 @@ def list_iam_roles_for_account(credentials=None, only_privileged=False, print_fl
 
 # Parallel execution of accounts to improve performance
 def gather_iam_roles_from_all_accounts(account_list=None, only_privileged=False, print_flag=False):
-    if not account_list or len
-        account_list == 0:
+    if not account_list or len(account_list) == 0:
         print("No account list provided, running for the local account.")
         field_names, all_roles_info = process_account(None, None, only_privileged, print_flag)
         return field_names, all_roles_info
@@ -237,7 +238,6 @@ def gather_iam_roles_from_all_accounts(account_list=None, only_privileged=False,
 
 # Handle file writing based on environment
 def handle_execution(account_list=None, only_privileged=False, print_flag=False):
-    # Debugging output for account_list
     print(f"Starting execution with accounts: {account_list}")
     field_names, all_roles_info = gather_iam_roles_from_all_accounts(account_list, only_privileged, print_flag)
     if not field_names:
@@ -254,25 +254,12 @@ def write_to_csv(filename, field_names, all_roles_info, s3bucket):
             writer = csv.DictWriter(file, fieldnames=field_names)
             writer.writeheader()
             for role_info in all_roles_info:
-                # Replace list-like data with properly formatted strings
-                if isinstance(role_info['ExplicitDeny'], list):
-                    role_info['ExplicitDeny'] = ', '.join([str(d) for d in role_info['ExplicitDeny']])
-                if isinstance(role_info['Conditions'], list):
-                    role_info['Conditions'] = ', '.join([str(c) for c in role_info['Conditions']])
-                if isinstance(role_info['Actions'], list):
-                    role_info['Actions'] = ' | '.join([str(a) for a in role_info['Actions']])
-
                 writer.writerow(role_info)
 
         print(f"CSV file {filename} created successfully in /tmp/")
     except Exception as e:
         print(f"Error writing to CSV: {e}")
 
-# Detect environment (CloudShell or Lambda)
-def detect_environment():
-    return "lambda" if 'LAMBDA_TASK_ROOT' in os.environ else "cloudshell"
-
 if __name__ == '__main__':
     account_list = None  # Empty account list to trigger local account processing
     handle_execution(account_list, only_privileged=False, print_flag=True)
-

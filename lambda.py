@@ -63,6 +63,17 @@ def analyze_policy(policy_document):
 
     return explicit_denies, conditions, can_modify_services, actions
 
+# Fetch managed policy actions
+def fetch_managed_policy_actions(iam_client, policy_arn):
+    try:
+        policy_version = iam_client.get_policy(PolicyArn=policy_arn)['Policy']['DefaultVersionId']
+        policy_document = iam_client.get_policy_version(PolicyArn=policy_arn, VersionId=policy_version)['PolicyVersion']['Document']
+        explicit_denies, conditions, can_modify_services, actions = analyze_policy(policy_document)
+        return actions
+    except Exception as e:
+        print(f"Error fetching managed policy actions for {policy_arn}: {e}")
+        return []
+
 # Process individual roles
 def process_role(iam_client, role, only_privileged, print_flag, acct_name):
     role_name = role['RoleName']
@@ -102,14 +113,16 @@ def process_role(iam_client, role, only_privileged, print_flag, acct_name):
                 if can_modify:
                     can_modify_services = True
 
-        # Collect attached policy names (though actions aren't analyzed here)
-        attached_policy_names = [p['PolicyName'] for p in attached_policies.get('AttachedPolicies', [])]
+        # Fetch and analyze attached managed policies
+        for policy in attached_policies.get('AttachedPolicies', []):
+            actions = fetch_managed_policy_actions(iam_client, policy['PolicyArn'])
+            policy_actions.append(f"{policy['PolicyName']}[{', '.join(actions)}]")
 
         # Append role info
         roles_info.append({
             'RoleName': role_name,
-            'PolicyCount': len(attached_policy_names) + len(inline_policies['PolicyNames']),
-            'PolicyNames': ', '.join(attached_policy_names + inline_policies['PolicyNames']),
+            'PolicyCount': len(attached_policies.get('AttachedPolicies', [])) + len(inline_policies['PolicyNames']),
+            'PolicyNames': ', '.join([p['PolicyName'] for p in attached_policies.get('AttachedPolicies', [])] + inline_policies['PolicyNames']),
             'Actions': '; '.join(policy_actions),  # policy_name[action1, action2]
             'ExplicitDeny': explicit_denies,
             'Conditions': conditions,

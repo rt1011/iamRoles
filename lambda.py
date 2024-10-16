@@ -31,6 +31,44 @@ def jump_accts(acctID, stsClient):
         print(f"Error assuming role in account {acctID}: {e}")
         return None
 
+# Process individual roles (newly added function)
+def process_role(iam_client, role, only_privileged, print_flag, acct_name):
+    role_name = role['RoleName']
+    roles_info = []
+
+    if print_flag:
+        print(f"Processing role '{role_name}' in account '{acct_name}'")
+
+    try:
+        # Fetch tags for the role
+        tags_response = iam_client.list_role_tags(RoleName=role_name)
+        tags = {tag['Key']: tag['Value'] for tag in tags_response.get('Tags', [])}
+
+        # Skip if the role is not privileged and we're filtering for privileged roles
+        if only_privileged and tags.get('Privileged') != 'Yes':
+            print(f"Skipping non-privileged role '{role_name}' in account '{acct_name}'")
+            return []
+
+        # Fetch attached and inline policies
+        attached_policies = iam_client.list_attached_role_policies(RoleName=role_name)
+        inline_policies = iam_client.list_role_policies(RoleName=role_name)
+
+        # Collect policy names and actions (example, this can be customized)
+        attached_policy_names = [p['PolicyName'] for p in attached_policies.get('AttachedPolicies', [])]
+        inline_policy_names = inline_policies.get('PolicyNames', [])
+
+        roles_info.append({
+            'RoleName': role_name,
+            'PolicyCount': len(attached_policy_names) + len(inline_policy_names),
+            'PolicyNames': ', '.join(attached_policy_names + inline_policy_names),
+            'Tags': tags
+        })
+
+    except Exception as e:
+        print(f"Error processing role '{role_name}' in account '{acct_name}': {e}")
+
+    return roles_info
+
 # Process a single account
 def process_account(acctID, sts_client, only_privileged, print_flag):
     if acctID is None:

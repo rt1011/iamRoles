@@ -61,7 +61,7 @@ def analyze_policy(policy_document):
         if any(verb in action for action in statement_actions for verb in modifying_actions):
             can_modify_services = True
 
-    return explicit_denies, conditions, can_modify_services, actions
+    return explicit_denies, conditions, can_modify_services, sorted(actions)  # Sorting actions here
 
 # Fetch managed policy actions
 def fetch_managed_policy_actions(iam_client, policy_arn):
@@ -85,7 +85,7 @@ def process_role(iam_client, role, only_privileged, print_flag, acct_name):
     try:
         # Fetch tags for the role
         tags_response = iam_client.list_role_tags(RoleName=role_name)
-        tags = {tag['Key']: tag['Value']} for tag in tags_response.get('Tags', [])}
+        tags = {tag['Key']: tag['Value'] for tag in tags_response.get('Tags', [])}
 
         # Skip if the role is not privileged and we're filtering for privileged roles
         if only_privileged and tags.get('Privileged') != 'Yes':

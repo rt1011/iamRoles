@@ -15,7 +15,7 @@ client_config = Config(
     }
 )
 
-# Function to assume a role in another AWS account
+# Function to assume a role in another AWS account (skip if running for the local account)
 def jump_accts(acctID, stsClient):
     try:
         print(f"Assuming role for account {acctID}")
@@ -33,6 +33,10 @@ def jump_accts(acctID, stsClient):
 
 # Process a single account
 def process_account(acctID, sts_client, only_privileged, print_flag):
+    if acctID is None:
+        print("No account ID provided, running for the local account.")
+        return list_iam_roles_for_account(None, only_privileged, print_flag, 'local')
+
     print(f"Processing account {acctID}")
     out = jump_accts(acctID, sts_client)
     if out is None:
@@ -60,7 +64,7 @@ def list_iam_roles_for_account(credentials=None, only_privileged=False, print_fl
                 config=client_config
             )
         else:
-            print(f"Using default credentials for account {acct_name}")
+            print(f"Using default credentials for account {acct_name} (local account)")
             iam_client = boto3.client('iam', config=client_config)
     
         roles_info = []
@@ -89,9 +93,10 @@ def list_iam_roles_for_account(credentials=None, only_privileged=False, print_fl
 
 # Parallel execution of accounts to improve performance
 def gather_iam_roles_from_all_accounts(account_list=None, only_privileged=False, print_flag=False):
-    if not account_list or not isinstance(account_list, list) or len(account_list) == 0:
-        print("Error: account_list is either None or empty. Please provide valid AWS account IDs.")
-        return [], []  # Return empty values if account_list is invalid
+    if not account_list or len(account_list) == 0:
+        print("No account list provided, running for the local account.")
+        field_names, all_roles_info = process_account(None, None, only_privileged, print_flag)
+        return field_names, all_roles_info
 
     print(f"Gathering IAM roles for accounts: {account_list}")
     sts_client = boto3.client('sts', config=client_config)
@@ -136,5 +141,5 @@ def detect_environment():
     return "lambda" if 'LAMBDA_TASK_ROOT' in os.environ else "cloudshell"
 
 if __name__ == '__main__':
-    account_list = ['123456789012', '098765432109']  # Example AWS account IDs
+    account_list = None  # Empty account list to trigger local account processing
     handle_execution(account_list, only_privileged=False, print_flag=True)

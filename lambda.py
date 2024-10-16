@@ -29,7 +29,7 @@ def jump_accts(acctID, stsClient):
         print(f"Error assuming role in account {acctID}: {e}")
         return None
 
-# Function to analyze policy documents
+# Function to analyze policy documents (both Allow and Deny)
 def analyze_policy(policy_document):
     explicit_denies = []
     conditions = []
@@ -59,7 +59,7 @@ def analyze_policy(policy_document):
         if any(verb in action for action in statement_actions for verb in modifying_actions):
             can_modify_services = True
 
-    return explicit_denies, conditions, can_modify_services, sorted(actions)
+    return explicit_denies, conditions, can_modify_services, sorted(set(actions))  # Sort and deduplicate actions
 
 # Fetch managed policy actions
 def fetch_managed_policy_actions(iam_client, policy_arn):
@@ -67,7 +67,7 @@ def fetch_managed_policy_actions(iam_client, policy_arn):
         policy_version = iam_client.get_policy(PolicyArn=policy_arn)['Policy']['DefaultVersionId']
         policy_document = iam_client.get_policy_version(PolicyArn=policy_arn, VersionId=policy_version)['PolicyVersion']['Document']
         explicit_denies, conditions, can_modify_services, actions = analyze_policy(policy_document)
-        return sorted(actions)
+        return sorted(set(actions))  # Sort and deduplicate actions
     except Exception as e:
         print(f"Error fetching managed policy actions for {policy_arn}: {e}")
         return []
@@ -116,12 +116,12 @@ def process_role(iam_client, role, only_privileged, print_flag, acct_name):
             actions = fetch_managed_policy_actions(iam_client, policy['PolicyArn'])
             policy_actions.append(f"{policy['PolicyName']}[{', '.join(actions)}]")
 
-        # Merge inline and managed policies, then sort them
+        # Merge and sort inline and managed policies
         all_policy_names = sorted(inline_policies['PolicyNames'] + [p['PolicyName'] for p in attached_policies['AttachedPolicies']])
 
-        # Handle long text in CSV output by concatenating all policies and actions
-        merged_policies = '; '.join(all_policy_names)
-        merged_actions = '; '.join(policy_actions)  # Use semicolons to avoid breaking lines in CSV
+        # Handle long text in CSV output by concatenating all policies and actions into a single line
+        merged_policies = ' | '.join(all_policy_names)  # Using a pipe symbol to separate policies
+        merged_actions = ' | '.join(policy_actions)  # Using a pipe symbol to separate actions
 
         # Append role info
         roles_info.append({
@@ -206,9 +206,10 @@ def list_iam_roles_for_account(credentials=None, only_privileged=False, print_fl
 
 # Parallel execution of accounts to improve performance
 def gather_iam_roles_from_all_accounts(account_list=None, only_privileged=False, print_flag=False):
-    if not account_list or len(account_list) == 0:
+    if not account_list or len
+        account_list == 0:
         print("No account list provided, running for the local account.")
-                field_names, all_roles_info = process_account(None, None, only_privileged, print_flag)
+        field_names, all_roles_info = process_account(None, None, only_privileged, print_flag)
         return field_names, all_roles_info
 
     print(f"Gathering IAM roles for accounts: {account_list}")
@@ -253,7 +254,16 @@ def write_to_csv(filename, field_names, all_roles_info, s3bucket):
             writer = csv.DictWriter(file, fieldnames=field_names)
             writer.writeheader()
             for role_info in all_roles_info:
+                # Replace list-like data with properly formatted strings
+                if isinstance(role_info['ExplicitDeny'], list):
+                    role_info['ExplicitDeny'] = ', '.join([str(d) for d in role_info['ExplicitDeny']])
+                if isinstance(role_info['Conditions'], list):
+                    role_info['Conditions'] = ', '.join([str(c) for c in role_info['Conditions']])
+                if isinstance(role_info['Actions'], list):
+                    role_info['Actions'] = ' | '.join([str(a) for a in role_info['Actions']])
+
                 writer.writerow(role_info)
+
         print(f"CSV file {filename} created successfully in /tmp/")
     except Exception as e:
         print(f"Error writing to CSV: {e}")

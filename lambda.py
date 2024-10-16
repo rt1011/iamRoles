@@ -31,7 +31,39 @@ def jump_accts(acctID, stsClient):
         print(f"Error assuming role in account {acctID}: {e}")
         return None
 
-# Process individual roles (newly added function)
+# Function to analyze policy documents
+def analyze_policy(policy_document):
+    explicit_denies = []
+    conditions = []
+    can_modify_services = False
+    actions = []
+
+    modifying_actions = ['Create', 'Put', 'Post', 'Update', 'Delete', 'Modify', 'Attach', 'Detach', 'Start', 'Stop', 'Reboot', 'Run']
+
+    for statement in policy_document.get('Statement', []):
+        effect = statement.get('Effect')
+        statement_actions = statement.get('Action', [])
+        resources = statement.get('Resource', [])
+        
+        if isinstance(statement_actions, str):
+            statement_actions = [statement_actions]
+        if isinstance(resources, str):
+            resources = [resources]
+        
+        if effect == 'Deny':
+            explicit_denies.append(statement_actions)
+
+        if 'Condition' in statement:
+            conditions.append(statement['Condition'])
+
+        actions.extend(statement_actions)
+
+        if any(verb in action for action in statement_actions for verb in modifying_actions):
+            can_modify_services = True
+
+    return explicit_denies, conditions, can_modify_services, actions
+
+# Process individual roles
 def process_role(iam_client, role, only_privileged, print_flag, acct_name):
     role_name = role['RoleName']
     roles_info = []
@@ -53,14 +85,35 @@ def process_role(iam_client, role, only_privileged, print_flag, acct_name):
         attached_policies = iam_client.list_attached_role_policies(RoleName=role_name)
         inline_policies = iam_client.list_role_policies(RoleName=role_name)
 
-        # Collect policy names and actions (example, this can be customized)
-        attached_policy_names = [p['PolicyName'] for p in attached_policies.get('AttachedPolicies', [])]
-        inline_policy_names = inline_policies.get('PolicyNames', [])
+        # Collect policy names and actions
+        explicit_denies = []
+        conditions = []
+        can_modify_services = False
+        policy_actions = []
 
+        # Analyze inline policies
+        for policy_name in inline_policies['PolicyNames']:
+            policy_document = iam_client.get_role_policy(RoleName=role_name, PolicyName=policy_name).get('PolicyDocument', None)
+            if policy_document:
+                denies, conds, can_modify, actions = analyze_policy(policy_document)
+                explicit_denies.extend(denies)
+                conditions.extend(conds)
+                policy_actions.append(f"{policy_name}[{', '.join(actions)}]")
+                if can_modify:
+                    can_modify_services = True
+
+        # Collect attached policy names (though actions aren't analyzed here)
+        attached_policy_names = [p['PolicyName'] for p in attached_policies.get('AttachedPolicies', [])]
+
+        # Append role info
         roles_info.append({
             'RoleName': role_name,
-            'PolicyCount': len(attached_policy_names) + len(inline_policy_names),
-            'PolicyNames': ', '.join(attached_policy_names + inline_policy_names),
+            'PolicyCount': len(attached_policy_names) + len(inline_policies['PolicyNames']),
+            'PolicyNames': ', '.join(attached_policy_names + inline_policies['PolicyNames']),
+            'Actions': '; '.join(policy_actions),  # policy_name[action1, action2]
+            'ExplicitDeny': explicit_denies,
+            'Conditions': conditions,
+            'CanModifyServices': can_modify_services,
             'Tags': tags
         })
 

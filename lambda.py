@@ -95,7 +95,11 @@ def list_iam_roles_for_account(credentials=None, only_privileged=False, print_fl
 def gather_iam_roles_from_all_accounts(account_list=None, only_privileged=False, print_flag=False):
     if not account_list or len(account_list) == 0:
         print("No account list provided, running for the local account.")
-        field_names, all_roles_info = process_account(None, None, only_privileged, print_flag)
+        all_roles_info = process_account(None, None, only_privileged, print_flag)
+        if all_roles_info:
+            field_names = list(all_roles_info[0].keys()) if len(all_roles_info) > 0 else []
+        else:
+            field_names = []
         return field_names, all_roles_info
 
     print(f"Gathering IAM roles for accounts: {account_list}")

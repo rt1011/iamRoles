@@ -120,7 +120,7 @@ def process_role(iam_client, role, only_privileged, print_flag, acct_name):
 
         # Merge and sort all policies (inline + attached managed policies)
         all_policy_names = inline_policies['PolicyNames'] + [p['PolicyName'] for p in attached_policies['AttachedPolicies']]
-        sorted_policy_names = sorted(all_policy_names)  # Sort after merging
+        sorted_policy_names = sorted(all_policy_names)  # Sorting after merging
 
         # Handle long text in CSV output by concatenating all policies and actions into a single line
         merged_policies = ', '.join(sorted_policy_names)  # Using commas to separate sorted policy names

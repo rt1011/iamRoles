@@ -32,45 +32,45 @@ def jump_accts(acctID, stsClient):
 # Function to analyze policy documents (both Allow and Deny)
 def analyze_policy(policy_document):
     explicit_denies = []
+    allow_actions = []
     conditions = []
     can_modify_services = False
-    actions = []
 
     modifying_actions = ['Create', 'Put', 'Post', 'Update', 'Delete', 'Modify', 'Attach', 'Detach', 'Start', 'Stop', 'Reboot', 'Run']
 
     for statement in policy_document.get('Statement', []):
         effect = statement.get('Effect')
-        statement_actions = statement.get('Action', [])
+        actions = statement.get('Action', [])
         resources = statement.get('Resource', [])
         
-        if isinstance(statement_actions, str):
-            statement_actions = [statement_actions]
+        if isinstance(actions, str):
+            actions = [actions]
         if isinstance(resources, str):
             resources = [resources]
         
         if effect == 'Deny':
-            explicit_denies.extend(statement_actions)
+            explicit_denies.extend(actions)
+        else:
+            allow_actions.extend(actions)
 
         if 'Condition' in statement:
             conditions.append(statement['Condition'])
 
-        actions.extend(statement_actions)
-
-        if any(verb in action for action in statement_actions for verb in modifying_actions):
+        if any(verb in action for action in actions for verb in modifying_actions):
             can_modify_services = True
 
-    return explicit_denies, conditions, can_modify_services, sorted(set(actions))  # Sort and deduplicate actions
+    return explicit_denies, allow_actions, conditions, can_modify_services
 
 # Fetch managed policy actions (including denies)
 def fetch_managed_policy_actions(iam_client, policy_arn):
     try:
         policy_version = iam_client.get_policy(PolicyArn=policy_arn)['Policy']['DefaultVersionId']
         policy_document = iam_client.get_policy_version(PolicyArn=policy_arn, VersionId=policy_version)['PolicyVersion']['Document']
-        explicit_denies, conditions, can_modify_services, actions = analyze_policy(policy_document)
-        return explicit_denies, sorted(set(actions)), conditions  # Sort and deduplicate actions and denies
+        explicit_denies, allow_actions, conditions, can_modify_services = analyze_policy(policy_document)
+        return explicit_denies, allow_actions, conditions, can_modify_services
     except Exception as e:
         print(f"Error fetching managed policy actions for {policy_arn}: {e}")
-        return [], [], []
+        return [], [], [], False
 
 # Process individual roles
 def process_role(iam_client, role, only_privileged, print_flag, acct_name):
@@ -96,6 +96,7 @@ def process_role(iam_client, role, only_privileged, print_flag, acct_name):
 
         # Collect policy names and actions
         explicit_denies = []
+        allow_actions = []
         conditions = []
         can_modify_services = False
         policy_actions = []
@@ -104,19 +105,21 @@ def process_role(iam_client, role, only_privileged, print_flag, acct_name):
         for policy_name in inline_policies['PolicyNames']:
             policy_document = iam_client.get_role_policy(RoleName=role_name, PolicyName=policy_name).get('PolicyDocument', None)
             if policy_document:
-                denies, conds, can_modify, actions = analyze_policy(policy_document)
+                denies, allows, conds, can_modify = analyze_policy(policy_document)
                 explicit_denies.extend(denies)
+                allow_actions.extend(allows)
                 conditions.extend(conds)
-                policy_actions.append(f"{policy_name}[{', '.join(sorted(actions))}]")
                 if can_modify:
                     can_modify_services = True
 
         # Fetch and analyze attached managed policies
         for policy in attached_policies.get('AttachedPolicies', []):
-            denies, actions, conds = fetch_managed_policy_actions(iam_client, policy['PolicyArn'])
+            denies, allows, conds, can_modify = fetch_managed_policy_actions(iam_client, policy['PolicyArn'])
             explicit_denies.extend(denies)
+            allow_actions.extend(allows)
             conditions.extend(conds)
-            policy_actions.append(f"{policy['PolicyName']}[{', '.join(actions)}]")
+            if can_modify:
+                can_modify_services = True
 
         # Merge and sort all policies (inline + attached managed policies)
         all_policy_names = inline_policies['PolicyNames'] + [p['PolicyName'] for p in attached_policies['AttachedPolicies']]
@@ -124,15 +127,16 @@ def process_role(iam_client, role, only_privileged, print_flag, acct_name):
 
         # Handle long text in CSV output by concatenating all policies and actions into a single line
         merged_policies = ', '.join(sorted_policy_names)  # Using commas to separate sorted policy names
-        merged_actions = ' | '.join(policy_actions)  # Using " | " to ensure actions stay in a single cell
+        allow_actions_str = ', '.join(sorted(set(allow_actions)))  # Sorted non-deny actions
+        explicit_denies_str = ', '.join(sorted(set(explicit_denies)))  # Sorted deny actions
 
         # Append role info
         roles_info.append({
             'RoleName': role_name,
             'PolicyCount': len(sorted_policy_names),
             'PolicyNames': merged_policies,  # Sorted and merged policy names
-            'Actions': merged_actions,  # Sorted and merged actions
-            'ExplicitDeny': ', '.join(sorted(set(explicit_denies))),  # Deduplicate and sort explicit denies
+            'Actions': allow_actions_str,  # Sorted and merged allow actions
+            'ExplicitDeny': explicit_denies_str,  # Sorted deny actions
             'Conditions': ', '.join([str(c) for c in conditions]),  # Join conditions into a single string
             'CanModifyServices': can_modify_services,
             'Tags': tags

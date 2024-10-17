@@ -1,5 +1,7 @@
 import boto3
 import re
+import csv
+import os
 
 # Initialize AWS clients
 config_client = boto3.client('config')
@@ -82,7 +84,20 @@ def get_trusted_advisor_findings(account_id):
             })
     return trusted_advisor_rules
 
-# Main function to gather and display filtered IAM rules from all sources
+# Function to write to CSV file
+def write_to_csv(iam_rules, account_id):
+    filename = f"IAM_Rules_Report_{account_id}.csv"
+    fieldnames = ['Name', 'AccountID', 'Source']
+    
+    with open(filename, mode='w', newline='') as csv_file:
+        writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
+        writer.writeheader()
+        for rule in iam_rules:
+            writer.writerow(rule)
+
+    print(f"CSV report generated: {filename}")
+
+# Main function to gather and save filtered IAM rules from all sources
 def generate_iam_report(account_id):
     iam_rules = []
 
@@ -101,11 +116,9 @@ def generate_iam_report(account_id):
     # Trusted Advisor Checks
     iam_rules += get_trusted_advisor_findings(account_id)
 
-    # Output the results
+    # Write the results to CSV
     if iam_rules:
-        print(f"Filtered IAM rules for account {account_id}:")
-        for rule in iam_rules:
-            print(f"Name: {rule['Name']}, AccountID: {rule['AccountID']}, Source: {rule['Source']}")
+        write_to_csv(iam_rules, account_id)
     else:
         print(f"No IAM-related rules found for account {account_id}.")
 

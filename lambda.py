@@ -111,6 +111,11 @@ def process_role(iam_client, role, only_privileged, print_flag, acct_name):
                 conditions.extend(conds)
                 if can_modify:
                     can_modify_services = True
+                # Format policy actions for inline policies
+                if allows:
+                    policy_actions.append(f"{policy_name}[{', '.join(sorted(allows))}]")
+                if denies:
+                    policy_actions.append(f"{policy_name}[{', '.join(sorted(denies))}]")
 
         # Fetch and analyze attached managed policies
         for policy in attached_policies.get('AttachedPolicies', []):
@@ -120,6 +125,11 @@ def process_role(iam_client, role, only_privileged, print_flag, acct_name):
             conditions.extend(conds)
             if can_modify:
                 can_modify_services = True
+            # Format policy actions for attached managed policies
+            if allows:
+                policy_actions.append(f"{policy['PolicyName']}[{', '.join(sorted(allows))}]")
+            if denies:
+                policy_actions.append(f"{policy['PolicyName']}[{', '.join(sorted(denies))}]")
 
         # Merge and sort all policies (inline + attached managed policies)
         all_policy_names = inline_policies['PolicyNames'] + [p['PolicyName'] for p in attached_policies['AttachedPolicies']]
@@ -127,16 +137,15 @@ def process_role(iam_client, role, only_privileged, print_flag, acct_name):
 
         # Handle long text in CSV output by concatenating all policies and actions into a single line
         merged_policies = ', '.join(sorted_policy_names)  # Using commas to separate sorted policy names
-        allow_actions_str = ', '.join(sorted(set(allow_actions)))  # Sorted non-deny actions
-        explicit_denies_str = ', '.join(sorted(set(explicit_denies)))  # Sorted deny actions
+        merged_actions = ', '.join(policy_actions)  # Using commas to format the policy actions in CSV
 
         # Append role info
         roles_info.append({
             'RoleName': role_name,
             'PolicyCount': len(sorted_policy_names),
             'PolicyNames': merged_policies,  # Sorted and merged policy names
-            'Actions': allow_actions_str,  # Sorted and merged allow actions
-            'ExplicitDeny': explicit_denies_str,  # Sorted deny actions
+            'Actions': merged_actions,  # Policy names with their respective actions
+            'ExplicitDeny': ', '.join(sorted(set(explicit_denies))),  # Sorted deny actions
             'Conditions': ', '.join([str(c) for c in conditions]),  # Join conditions into a single string
             'CanModifyServices': can_modify_services,
             'Tags': tags

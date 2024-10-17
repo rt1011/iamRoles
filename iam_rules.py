@@ -58,12 +58,22 @@ def get_access_analyzer_findings(account_id):
                 })
     return access_analyzer_rules
 
-# Function to retrieve Security Hub findings using list_findings_v2
+# Function to retrieve Security Hub findings using list_findings_v2 with specific filters
 def get_security_hub_findings(account_id):
     security_hub_rules = []
     
+    # Define the finding types we want to include, avoiding unsupported ones
+    filters = {
+        'Type': [
+            {
+                'Comparison': 'PREFIX',
+                'Value': 'Software and Configuration Checks'
+            }
+        ]
+    }
+
     paginator = securityhub_client.get_paginator('list_findings_v2')
-    page_iterator = paginator.paginate()
+    page_iterator = paginator.paginate(Filters=filters)
     
     for page in page_iterator:
         for finding in page['Findings']:
@@ -114,7 +124,7 @@ def generate_iam_report(account_id):
     # Access Analyzer Findings
     iam_rules += get_access_analyzer_findings(account_id)
 
-    # Security Hub Findings using list_findings_v2
+    # Security Hub Findings using list_findings_v2 with filter
     iam_rules += get_security_hub_findings(account_id)
 
     # Trusted Advisor Checks

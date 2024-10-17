@@ -58,17 +58,21 @@ def get_access_analyzer_findings(account_id):
                 })
     return access_analyzer_rules
 
-# Function to retrieve Security Hub findings
+# Function to retrieve Security Hub findings using list_findings_v2
 def get_security_hub_findings(account_id):
     security_hub_rules = []
-    response = securityhub_client.get_findings()
-    for finding in response['Findings']:
-        if filter_iam_rules(finding['Title']):
-            security_hub_rules.append({
-                'Name': finding['Title'],
-                'AccountID': account_id,
-                'Source': 'Security Hub'
-            })
+    
+    paginator = securityhub_client.get_paginator('list_findings_v2')
+    page_iterator = paginator.paginate()
+    
+    for page in page_iterator:
+        for finding in page['Findings']:
+            if filter_iam_rules(finding['Title']):
+                security_hub_rules.append({
+                    'Name': finding['Title'],
+                    'AccountID': account_id,
+                    'Source': 'Security Hub'
+                })
     return security_hub_rules
 
 # Function to retrieve Trusted Advisor checks
@@ -110,7 +114,7 @@ def generate_iam_report(account_id):
     # Access Analyzer Findings
     iam_rules += get_access_analyzer_findings(account_id)
 
-    # Security Hub Findings
+    # Security Hub Findings using list_findings_v2
     iam_rules += get_security_hub_findings(account_id)
 
     # Trusted Advisor Checks

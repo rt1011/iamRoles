@@ -1,142 +1,50 @@
-import boto3
-import re
-import csv
-import os
+@echo off
+setlocal
 
-# Initialize AWS clients
-config_client = boto3.client('config')
-guardduty_client = boto3.client('guardduty')
-accessanalyzer_client = boto3.client('accessanalyzer')
-securityhub_client = boto3.client('securityhub')
-trustedadvisor_client = boto3.client('support')
+REM Set the account ID
+for /f "tokens=*" %%A in ('aws sts get-caller-identity --query "Account" --output text') do (set ACCOUNT_ID=%%A)
 
-# Filter function to check for 'IAM' in rule names
-def filter_iam_rules(rule_name):
-    return bool(re.search(r'iam', rule_name, re.IGNORECASE))
+REM Output CSV file
+set OUTPUT_FILE=IAM_Rules_Report_%ACCOUNT_ID%.csv
 
-# Function to retrieve findings/rules from AWS Config
-def get_config_rules(account_id):
-    config_rules = []
-    response = config_client.describe_config_rules()
-    for rule in response['ConfigRules']:
-        if filter_iam_rules(rule['ConfigRuleName']):
-            config_rules.append({
-                'Name': rule['ConfigRuleName'],
-                'AccountID': account_id,
-                'Source': 'AWS Config'
-            })
-    return config_rules
+REM Write CSV header
+echo Name,AccountID,Source > %OUTPUT_FILE%
 
-# Function to retrieve GuardDuty findings
-def get_guardduty_findings(account_id):
-    guardduty_rules = []
-    detectors = guardduty_client.list_detectors()['DetectorIds']
-    for detector_id in detectors:
-        findings = guardduty_client.list_findings(DetectorId=detector_id)
-        for finding_id in findings['FindingIds']:
-            finding = guardduty_client.get_findings(DetectorId=detector_id, FindingIds=[finding_id])['Findings'][0]
-            if filter_iam_rules(finding['Title']):
-                guardduty_rules.append({
-                    'Name': finding['Title'],
-                    'AccountID': account_id,
-                    'Source': 'GuardDuty'
-                })
-    return guardduty_rules
+REM AWS Config: Get Config Rules
+for /f "tokens=*" %%A in ('aws configservice describe-config-rules --query "ConfigRules[?contains(tolower(ConfigRuleName), 'iam')].{Name:ConfigRuleName}" --output text') do (
+    echo %%A,%ACCOUNT_ID%,AWS Config >> %OUTPUT_FILE%
+)
 
-# Function to retrieve Access Analyzer findings
-def get_access_analyzer_findings(account_id):
-    access_analyzer_rules = []
-    analyzers = accessanalyzer_client.list_analyzers()['analyzers']
-    for analyzer in analyzers:
-        findings = accessanalyzer_client.list_findings(analyzerArn=analyzer['arn'])
-        for finding in findings['findings']:
-            if filter_iam_rules(finding['id']):
-                access_analyzer_rules.append({
-                    'Name': finding['id'],
-                    'AccountID': account_id,
-                    'Source': 'Access Analyzer'
-                })
-    return access_analyzer_rules
+REM GuardDuty: Get Findings
+for /f "tokens=*" %%A in ('aws guardduty list-detectors --output text') do (
+    for /f "tokens=*" %%B in ('aws guardduty list-findings --detector-id %%A --query "FindingIds" --output text') do (
+        for /f "tokens=*" %%C in ('aws guardduty get-findings --detector-id %%A --finding-ids %%B --query "Findings[?contains(tolower(Title), 'iam')].{Name:Title}" --output text') do (
+            echo %%C,%ACCOUNT_ID%,GuardDuty >> %OUTPUT_FILE%
+        )
+    )
+)
 
-# Function to retrieve Security Hub findings using list_findings_v2 with specific filters
-def get_security_hub_findings(account_id):
-    security_hub_rules = []
-    
-    # Define the finding types we want to include, avoiding unsupported ones
-    filters = {
-        'Type': [
-            {
-                'Comparison': 'PREFIX',
-                'Value': 'Software and Configuration Checks'
-            }
-        ]
-    }
+REM Access Analyzer: Get Findings
+for /f "tokens=*" %%A in ('aws accessanalyzer list-analyzers --query "analyzers[].arn" --output text') do (
+    for /f "tokens=*" %%B in ('aws accessanalyzer list-findings --analyzer-arn %%A --query "findings[?contains(tolower(id), 'iam')].{Name:id}" --output text') do (
+        echo %%B,%ACCOUNT_ID%,Access Analyzer >> %OUTPUT_FILE%
+    )
+)
 
-    paginator = securityhub_client.get_paginator('list_findings_v2')
-    page_iterator = paginator.paginate(Filters=filters)
-    
-    for page in page_iterator:
-        for finding in page['Findings']:
-            if filter_iam_rules(finding['Title']):
-                security_hub_rules.append({
-                    'Name': finding['Title'],
-                    'AccountID': account_id,
-                    'Source': 'Security Hub'
-                })
-    return security_hub_rules
+REM Security Hub: Get Findings using list-findings-v2 with filters
+aws securityhub list-findings-v2 --filters Type="PREFIX:Software and Configuration Checks" --query "Findings[?contains(tolower(Title), 'iam')].{Name:Title}" --output text > temp_securityhub.txt
+for /f "tokens=*" %%A in (temp_securityhub.txt) do (
+    echo %%A,%ACCOUNT_ID%,Security Hub >> %OUTPUT_FILE%
+)
+del temp_securityhub.txt
 
-# Function to retrieve Trusted Advisor checks
-def get_trusted_advisor_findings(account_id):
-    trusted_advisor_rules = []
-    checks = trustedadvisor_client.describe_trusted_advisor_checks(language='en')['checks']
-    for check in checks:
-        if filter_iam_rules(check['name']):
-            trusted_advisor_rules.append({
-                'Name': check['name'],
-                'AccountID': account_id,
-                'Source': 'Trusted Advisor'
-            })
-    return trusted_advisor_rules
+REM Trusted Advisor: Get Checks
+for /f "tokens=*" %%A in ('aws support describe-trusted-advisor-checks --language "en" --query "checks[?contains(tolower(name), 'iam')].{Name:name}" --output text') do (
+    echo %%A,%ACCOUNT_ID%,Trusted Advisor >> %OUTPUT_FILE%
+)
 
-# Function to write to CSV file
-def write_to_csv(iam_rules, account_id):
-    filename = f"IAM_Rules_Report_{account_id}.csv"
-    fieldnames = ['Name', 'AccountID', 'Source']
-    
-    with open(filename, mode='w', newline='') as csv_file:
-        writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
-        writer.writeheader()
-        for rule in iam_rules:
-            writer.writerow(rule)
+REM Notify the user
+echo CSV report generated: %OUTPUT_FILE%
 
-    print(f"CSV report generated: {filename}")
-
-# Main function to gather and save filtered IAM rules from all sources
-def generate_iam_report(account_id):
-    iam_rules = []
-
-    # AWS Config Rules
-    iam_rules += get_config_rules(account_id)
-
-    # GuardDuty Findings
-    iam_rules += get_guardduty_findings(account_id)
-
-    # Access Analyzer Findings
-    iam_rules += get_access_analyzer_findings(account_id)
-
-    # Security Hub Findings using list_findings_v2 with filter
-    iam_rules += get_security_hub_findings(account_id)
-
-    # Trusted Advisor Checks
-    iam_rules += get_trusted_advisor_findings(account_id)
-
-    # Write the results to CSV
-    if iam_rules:
-        write_to_csv(iam_rules, account_id)
-    else:
-        print(f"No IAM-related rules found for account {account_id}.")
-
-# Example execution, assuming you're using an assumed role or have proper permissions
-if __name__ == '__main__':
-    account_id = boto3.client('sts').get_caller_identity()['Account']
-    generate_iam_report(account_id)
+endlocal
+pause

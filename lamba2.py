@@ -18,18 +18,17 @@ def list_iam_roles(iam_client):
         roles.extend(response['Roles'])
     return roles
 
-def get_attached_policies(iam_client, role_name):
-    attached_policies = []
+def get_combined_policies(iam_client, role_name):
+    # Combine both inline and managed policies and sort them
+    policies = []
+    
     inline_policies = iam_client.list_role_policies(RoleName=role_name)['PolicyNames']
     managed_policies = iam_client.list_attached_role_policies(RoleName=role_name)['AttachedPolicies']
     
-    for policy_name in inline_policies:
-        attached_policies.append(f"InlinePolicy: {policy_name}")
+    policies.extend(inline_policies)  # Add inline policies
+    policies.extend([policy['PolicyName'] for policy in managed_policies])  # Add managed policies
     
-    for policy in managed_policies:
-        attached_policies.append(f"ManagedPolicy: {policy['PolicyName']}")
-    
-    return sorted(attached_policies)
+    return sorted(policies)  # Return sorted combined list
 
 def check_privileged_role(iam_client, role_name, only_privileged=True):
     # Retrieve the tags for the role
@@ -37,7 +36,7 @@ def check_privileged_role(iam_client, role_name, only_privileged=True):
     tags = {tag['Key']: tag['Value'] for tag in tags_response.get('Tags', [])}
     
     # Skip non-privileged roles if filtering for privileged roles
-    if only_privileged and tags.get('Privileged') != 'yes':
+    if only_privileged and tags.get('Privileged') != 'Yes':  # Correct comparison
         print(f"Skipping non-privileged role '{role_name}'")
         return False
     else:
@@ -52,11 +51,11 @@ def process_roles(iam_client, only_privileged=True):
         role_name = role['RoleName']
         
         if check_privileged_role(iam_client, role_name, only_privileged):
-            policies = get_attached_policies(iam_client, role_name)
-            print(f"Policies for role {role_name}: {policies}")  # Print policies for privileged role
+            policies = get_combined_policies(iam_client, role_name)
+            print(f"Combined policies for role {role_name}: {policies}")  # Print combined policies
             role_data.append({
                 'RoleName': role_name,
-                'Policies': '; '.join(policies)
+                'Policies': ', '.join(policies)  # Combine policy names with comma
             })
     
     return role_data

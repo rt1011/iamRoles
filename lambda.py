@@ -119,7 +119,7 @@ def check_privileged_actions(iam_client, role_name):
     return allow_actions_list, deny_actions_list
 
 def split_allow_actions(allow_actions_list, prefix):
-    """Splits the allow actions into multiple columns with 30 actions per column or if exceeding Excel's 32,767 character limit."""
+    """Splits the allow actions into multiple columns respecting Excel's 32,767 character limit. Truncates at commas or other boundaries."""
     allow_action_columns = {}
     current_column = []
     char_count = 0
@@ -128,16 +128,17 @@ def split_allow_actions(allow_actions_list, prefix):
     for action in allow_actions_list:
         action_length = len(action)
         
-        # If adding this action exceeds the character limit or max actions, create a new column
-        if len(current_column) >= MAX_POLICY_ACTIONS_PER_COLUMN or (char_count + action_length > EXCEL_CELL_LIMIT):
+        # Check if the next action would exceed the limit; if so, create a new column
+        if (char_count + action_length) > EXCEL_CELL_LIMIT:
             allow_action_columns[f"{prefix}_part_{column_index}"] = "; ".join(current_column)
             column_index += 1
             current_column = []
             char_count = 0
         
+        # Add action to current column and increment char count
         current_column.append(action)
-        char_count += action_length
-    
+        char_count += action_length + 2  # +2 accounts for the "; " separator
+
     # Add the last column if there are remaining actions
     if current_column:
         allow_action_columns[f"{prefix}_part_{column_index}"] = "; ".join(current_column)
@@ -160,7 +161,7 @@ def process_roles(iam_client, only_privileged=True):
             # Count the number of characters in allow actions
             allow_actions_character_count = sum(len(action) for action in allow_actions_list)
 
-            # Split allow actions into multiple columns, 30 per column or within Excel's character limit
+            # Split allow actions into multiple columns while ensuring no column exceeds Excel's character limit
             allow_actions_columns = split_allow_actions(allow_actions_list, "AllowActions")
             
             # Join deny actions into one column

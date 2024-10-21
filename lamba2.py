@@ -31,23 +31,31 @@ def get_attached_policies(iam_client, role_name):
     
     return sorted(attached_policies)
 
-def process_roles(iam_client):
+def check_privileged_role(iam_client, role_name, only_privileged=True):
+    # Retrieve the tags for the role
+    tags_response = iam_client.list_role_tags(RoleName=role_name)
+    tags = {tag['Key']: tag['Value'] for tag in tags_response.get('Tags', [])}
+    
+    # Skip non-privileged roles if filtering for privileged roles
+    if only_privileged and tags.get('Privileged') != 'yes':
+        print(f"Skipping non-privileged role '{role_name}'")
+        return False
+    else:
+        print(f"Processing role: '{role_name}'")
+        return True
+
+def process_roles(iam_client, only_privileged=True):
     roles = list_iam_roles(iam_client)
     role_data = []
     
     for role in roles:
-        print(f"Scanning role: {role['RoleName']}")  # Print role being scanned
+        role_name = role['RoleName']
         
-        # Print tags for debugging
-        tags = {tag['Key']: tag['Value'] for tag in role.get('Tags', [])}
-        print(f"Role: {role['RoleName']}, Tags: {tags}")
-        
-        if tags.get('Privileged') == 'yes':
-            print(f"Processing privileged role: {role['RoleName']}")
-            policies = get_attached_policies(iam_client, role['RoleName'])
-            print(f"Policies for role {role['RoleName']}: {policies}")  # Print policies for debugging
+        if check_privileged_role(iam_client, role_name, only_privileged):
+            policies = get_attached_policies(iam_client, role_name)
+            print(f"Policies for role {role_name}: {policies}")  # Print policies for privileged role
             role_data.append({
-                'RoleName': role['RoleName'],
+                'RoleName': role_name,
                 'Policies': '; '.join(policies)
             })
     
@@ -69,7 +77,11 @@ def write_to_csv(filename, fieldnames, data):
 def lambda_handler(event, context):
     iam_client = boto3.client('iam')
     fieldnames = ['RoleName', 'Policies']
-    role_data = process_roles(iam_client)
+    
+    # Add an option to filter based on privilege tags
+    only_privileged = event.get('only_privileged', True)  # Use the input from the event to decide
+
+    role_data = process_roles(iam_client, only_privileged)
     
     # Define filename with timestamp
     filename = f"iam_roles_{datetime.now().strftime('%Y%m%d%H%M%S')}.csv"
@@ -81,7 +93,11 @@ if __name__ == "__main__":
     iam_client = session.client('iam')
     
     fieldnames = ['RoleName', 'Policies']
-    role_data = process_roles(iam_client)
+    
+    # Change this value to True or False to filter on the Privileged tag
+    only_privileged = True
+    
+    role_data = process_roles(iam_client, only_privileged)
     
     # Define filename with timestamp
     filename = f"iam_roles_{datetime.now().strftime('%Y%m%d%H%M%S')}.csv"

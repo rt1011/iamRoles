@@ -3,6 +3,9 @@ import csv
 import os
 from datetime import datetime
 
+# Constants
+EXCEL_CELL_LIMIT = 32767
+
 # List of privileged action patterns to match against
 MODIFYING_ACTIONS = ['Put', 'Create', 'Delete', 'Update', 'Modify', 'Set', 
                      'Add', 'Attach', 'Remove', 'Detach', 'Run', 'Start', 
@@ -124,6 +127,16 @@ def check_privileged_actions(iam_client, role_name):
     
     return can_modify_services, privileged_actions, all_actions_with_policy_list
 
+def split_long_text(long_text, prefix, column_number):
+    """Splits long text into multiple fields if it exceeds Excel's character limit."""
+    parts = []
+    while len(long_text) > EXCEL_CELL_LIMIT:
+        parts.append(long_text[:EXCEL_CELL_LIMIT])
+        long_text = long_text[EXCEL_CELL_LIMIT:]
+    
+    parts.append(long_text)
+    return {f"{prefix}_part_{i + 1}": part for i, part in enumerate(parts)}
+
 def process_roles(iam_client, only_privileged=True):
     roles = list_iam_roles(iam_client)
     role_data = []
@@ -137,16 +150,26 @@ def process_roles(iam_client, only_privileged=True):
             conditions, deny_actions = get_policy_conditions_and_denies(iam_client, role_name)
             can_modify_services, privileged_actions, all_actions_with_policy_list = check_privileged_actions(iam_client, role_name)
             
+            # Join the actions list into a single string
+            all_actions_with_policy_text = '; '.join(all_actions_with_policy_list)
+            
+            # Check if the string exceeds the Excel character limit and split if necessary
+            if len(all_actions_with_policy_text) > EXCEL_CELL_LIMIT:
+                all_actions_with_policy_columns = split_long_text(all_actions_with_policy_text, "AllActionsWithPolicy", 1)
+            else:
+                all_actions_with_policy_columns = {"AllActionsWithPolicy": all_actions_with_policy_text}
+            
             print(f"Combined policies for role {role_name}: {policies}")
             print(f"Policy count: {policy_count}")
             print(f"Conditions: {conditions}")
             print(f"Deny Actions: {deny_actions}")
             print(f"Can modify services: {can_modify_services}")
             print(f"Privileged Actions: {privileged_actions}")
-            print(f"All Actions with Policy: {all_actions_with_policy_list}")
+            print(f"All Actions with Policy: {all_actions_with_policy_text}")
             print(f"Tags: {tags}")
             
-            role_data.append({
+            # Add basic role data
+            role_info = {
                 'RoleName': role_name,
                 'Policies': ', '.join(policies),  # Combined sorted policies
                 'PolicyCount': policy_count,
@@ -154,9 +177,12 @@ def process_roles(iam_client, only_privileged=True):
                 'DenyActions': ', '.join(deny_actions) if deny_actions else "None",  # Add deny actions if any
                 'CanModifyServices': can_modify_services,
                 'PrivilegedActions': ', '.join(privileged_actions) if privileged_actions else "None",
-                'AllActionsWithPolicy': '; '.join(all_actions_with_policy_list) if all_actions_with_policy_list else "None",
                 'Tags': tags
-            })
+            }
+            
+            # Merge with the split actions columns
+            role_info.update(all_actions_with_policy_columns)
+            role_data.append(role_info)
     
     return role_data
 
@@ -169,18 +195,18 @@ def write_to_csv(filename, fieldnames, data):
             writer.writerow(row)
     print(f"CSV written: {filename}")
 
-    # Commented out S3 bucket upload part
-    # s3 = boto3.client('s3')
-    # s3.upload_file(filename, s3bucket, f"{s3folder}/{filename}")
-
 def lambda_handler(event, context):
     iam_client = boto3.client('iam')
-    fieldnames = ['RoleName', 'Policies', 'PolicyCount', 'Conditions', 'DenyActions', 'CanModifyServices', 'PrivilegedActions', 'AllActionsWithPolicy', 'Tags']
+    fieldnames = ['RoleName', 'Policies', 'PolicyCount', 'Conditions', 'DenyActions', 'CanModifyServices', 'PrivilegedActions', 'Tags', 'AllActionsWithPolicy_part_1']
     
     # Add an option to filter based on privilege tags
     only_privileged = event.get('only_privileged', True)
 
     role_data = process_roles(iam_client, only_privileged)
+    
+    # Collect additional action columns created dynamically
+    all_columns = set(col for row in role_data for col in row.keys())
+    fieldnames.extend(sorted(all_columns - set(fieldnames)))
     
     # Define filename with timestamp
     filename = f"iam_roles_{datetime.now().strftime('%Y%m%d%H%M%S')}.csv"
@@ -191,13 +217,15 @@ if __name__ == "__main__":
     session = boto3.Session()
     iam_client = session.client('iam')
     
-    fieldnames = ['RoleName', 'Policies', 'PolicyCount', 'Conditions', 'DenyActions', 'CanModifyServices', 'PrivilegedActions', 'AllActionsWithPolicy', 'Tags']
+    fieldnames = ['RoleName', 'Policies', 'PolicyCount', 'Conditions', 'DenyActions', 'CanModifyServices', 'PrivilegedActions', 'Tags', 'AllActionsWithPolicy_part_1']
     
-    # Change this value to True or False to filter on the Privileged tag
-    only_privileged = True
+    # Add option to split long columns across multiple columns if needed
+    role_data = process_roles(iam_client, only_privileged=True)
     
-    role_data = process_roles(iam_client, only_privileged)
-    
+    # Collect additional action columns created dynamically
+    all_columns = set(col for row in role_data for col in row.keys())
+    fieldnames.extend(sorted(all_columns - set(fieldnames)))
+
     # Define filename with timestamp
     filename = f"iam_roles_{datetime.now().strftime('%Y%m%d%H%M%S')}.csv"
     write_to_csv(filename, fieldnames, role_data)

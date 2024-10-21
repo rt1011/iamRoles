@@ -150,22 +150,21 @@ def process_roles(iam_client, only_privileged=True):
             allow_actions_text = '; '.join(allow_actions_list)
             deny_actions_text = '; '.join(deny_actions_list)
             
-            # Check if the string exceeds the Excel character limit and split if necessary
-            if len(allow_actions_text) > EXCEL_CELL_LIMIT:
-                allow_actions_columns = split_long_text(allow_actions_text, "AllowActions")
-            else:
-                allow_actions_columns = {"AllowActions": allow_actions_text}
+            # Combine allow and deny actions into one string for the PolicyActions column
+            combined_policy_actions = f"Allow: {allow_actions_text}; Deny: {deny_actions_text}"
             
-            if len(deny_actions_text) > EXCEL_CELL_LIMIT:
-                deny_actions_columns = split_long_text(deny_actions_text, "DenyActions")
+            # Check if the combined actions string exceeds the Excel character limit and split if necessary
+            if len(combined_policy_actions) > EXCEL_CELL_LIMIT:
+                policy_actions_columns = split_long_text(combined_policy_actions, "PolicyActions")
             else:
-                deny_actions_columns = {"DenyActions": deny_actions_text}
+                policy_actions_columns = {"PolicyActions": combined_policy_actions}
             
             print(f"Combined policies for role {role_name}: {policies}")
             print(f"Policy count: {policy_count}")
             print(f"Conditions: {conditions}")
             print(f"Deny Actions: {deny_actions_text}")
             print(f"Allow Actions: {allow_actions_text}")
+            print(f"Policy Actions: {combined_policy_actions}")
             print(f"Tags: {tags}")
             
             # Add basic role data
@@ -177,9 +176,8 @@ def process_roles(iam_client, only_privileged=True):
                 'Tags': tags
             }
             
-            # Merge with the split actions columns
-            role_info.update(allow_actions_columns)
-            role_info.update(deny_actions_columns)
+            # Merge with the split PolicyActions columns
+            role_info.update(policy_actions_columns)
             role_data.append(role_info)
     
     return role_data
@@ -195,7 +193,7 @@ def write_to_csv(filename, fieldnames, data):
 
 def lambda_handler(event, context):
     iam_client = boto3.client('iam')
-    fieldnames = ['RoleName', 'Policies', 'PolicyCount', 'Conditions', 'Tags', 'AllowActions_part_1', 'DenyActions_part_1']
+    fieldnames = ['RoleName', 'Policies', 'PolicyCount', 'Conditions', 'Tags', 'PolicyActions_part_1']
     
     # Add an option to filter based on privilege tags
     only_privileged = event.get('only_privileged', True)
@@ -206,6 +204,9 @@ def lambda_handler(event, context):
     all_columns = set(col for row in role_data for col in row.keys())
     fieldnames.extend(sorted(all_columns - set(fieldnames)))
     
+    # Ensure PolicyActions is the last column
+    fieldnames = [col for col in fieldnames if not col.startswith('PolicyActions')] + [col for col in fieldnames if col.startswith('PolicyActions')]
+    
     # Define filename with timestamp
     filename = f"iam_roles_{datetime.now().strftime('%Y%m%d%H%M%S')}.csv"
     write_to_csv(filename, fieldnames, role_data)
@@ -215,7 +216,7 @@ if __name__ == "__main__":
     session = boto3.Session()
     iam_client = session.client('iam')
     
-    fieldnames = ['RoleName', 'Policies', 'PolicyCount', 'Conditions', 'Tags', 'AllowActions_part_1', 'DenyActions_part_1']
+    fieldnames = ['RoleName', 'Policies', 'PolicyCount', 'Conditions', 'Tags', 'PolicyActions_part_1']
     
     # Add option to split long columns across multiple columns if needed
     role_data = process_roles(iam_client, only_privileged=True)
@@ -224,6 +225,9 @@ if __name__ == "__main__":
     all_columns = set(col for row in role_data for col in row.keys())
     fieldnames.extend(sorted(all_columns - set(fieldnames)))
 
+    # Ensure PolicyActions is the last column
+    fieldnames = [col for col in fieldnames if not col.startswith('PolicyActions')] + [col for col in fieldnames if col.startswith('PolicyActions')]
+    
     # Define filename with timestamp
     filename = f"iam_roles_{datetime.now().strftime('%Y%m%d%H%M%S')}.csv"
     write_to_csv(filename, fieldnames, role_data)

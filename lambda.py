@@ -81,7 +81,7 @@ def check_privileged_role(iam_client, role_name, only_privileged=True):
 
 def check_privileged_actions(iam_client, role_name):
     privileged_actions = []
-    all_actions_with_policy = []  # List to store policyName[actions]
+    all_actions_with_policy = {}  # Use a dictionary to group actions by policy
     can_modify_services = False
     
     # Check inline policies for privileged actions
@@ -93,7 +93,8 @@ def check_privileged_actions(iam_client, role_name):
                 actions = statement.get('Action', [])
                 if isinstance(actions, str):  # If single action
                     actions = [actions]
-                all_actions_with_policy.append(f"{policy_name}[{', '.join(actions)}]")  # Add to list
+                # Add to the same policy entry in the dictionary
+                all_actions_with_policy.setdefault(policy_name, []).extend(actions)
                 for action in actions:
                     if any(verb in action for verb in MODIFYING_ACTIONS) or '*' in action:  # Check for privileged actions
                         privileged_actions.append(action)
@@ -110,13 +111,18 @@ def check_privileged_actions(iam_client, role_name):
                 actions = statement.get('Action', [])
                 if isinstance(actions, str):  # If single action
                     actions = [actions]
-                all_actions_with_policy.append(f"{policy['PolicyName']}[{', '.join(actions)}]")  # Add to list
+                # Add to the same policy entry in the dictionary
+                all_actions_with_policy.setdefault(policy['PolicyName'], []).extend(actions)
                 for action in actions:
                     if any(verb in action for verb in MODIFYING_ACTIONS) or '*' in action:  # Check for privileged actions
                         privileged_actions.append(action)
                         can_modify_services = True
     
-    return can_modify_services, privileged_actions, all_actions_with_policy
+    # Format the actions grouped by policy into a list of PolicyName[Actions]
+    all_actions_with_policy_list = [f"{policy_name}[{', '.join(sorted(set(actions), key=lambda x: x.lower()))}]"
+                                    for policy_name, actions in all_actions_with_policy.items()]
+    
+    return can_modify_services, privileged_actions, all_actions_with_policy_list
 
 def process_roles(iam_client, only_privileged=True):
     roles = list_iam_roles(iam_client)
@@ -129,7 +135,7 @@ def process_roles(iam_client, only_privileged=True):
         if is_privileged:
             policies, policy_count = get_combined_policies(iam_client, role_name)
             conditions, deny_actions = get_policy_conditions_and_denies(iam_client, role_name)
-            can_modify_services, privileged_actions, all_actions_with_policy = check_privileged_actions(iam_client, role_name)
+            can_modify_services, privileged_actions, all_actions_with_policy_list = check_privileged_actions(iam_client, role_name)
             
             print(f"Combined policies for role {role_name}: {policies}")
             print(f"Policy count: {policy_count}")
@@ -137,7 +143,7 @@ def process_roles(iam_client, only_privileged=True):
             print(f"Deny Actions: {deny_actions}")
             print(f"Can modify services: {can_modify_services}")
             print(f"Privileged Actions: {privileged_actions}")
-            print(f"All Actions with Policy: {all_actions_with_policy}")
+            print(f"All Actions with Policy: {all_actions_with_policy_list}")
             print(f"Tags: {tags}")
             
             role_data.append({
@@ -148,7 +154,7 @@ def process_roles(iam_client, only_privileged=True):
                 'DenyActions': ', '.join(deny_actions) if deny_actions else "None",  # Add deny actions if any
                 'CanModifyServices': can_modify_services,
                 'PrivilegedActions': ', '.join(privileged_actions) if privileged_actions else "None",
-                'AllActionsWithPolicy': '; '.join(all_actions_with_policy) if all_actions_with_policy else "None",
+                'AllActionsWithPolicy': '; '.join(all_actions_with_policy_list) if all_actions_with_policy_list else "None",
                 'Tags': tags
             })
     

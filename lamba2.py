@@ -36,8 +36,10 @@ def process_roles(iam_client):
     role_data = []
     
     for role in roles:
+        print(f"Scanning role: {role['RoleName']}")  # Print role being scanned
         tags = {tag['Key']: tag['Value'] for tag in role.get('Tags', [])}
-        if tags.get('privilege') == 'yes':
+        if tags.get('Privileged') == 'yes':
+            print(f"Processing privileged role: {role['RoleName']}")
             policies = get_attached_policies(iam_client, role['RoleName'])
             role_data.append({
                 'RoleName': role['RoleName'],

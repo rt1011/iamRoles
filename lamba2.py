@@ -3,6 +3,12 @@ import csv
 import os
 from datetime import datetime
 
+# List of privileged action patterns to match against
+PRIVILEGED_ACTIONS_PATTERNS = ['Put*', 'Create*', 'Delete*', 'Update*', 'Modify*', 'Set*',
+                               'Add*', 'Attach*', 'Remove*', 'Detach*', 'Run*', 'Start*', 
+                               'Stop*', 'Reboot*', 'Terminate*', 'Grant*', 'Deny*', 'Revoke*', 
+                               'AssumeRole', 'PassRole']
+
 def assume_role(sts_client, acct_id, role_name="lambda1"):
     # Function to assume role in the target account, if needed
     response = sts_client.assume_role(
@@ -34,18 +40,21 @@ def get_combined_policies(iam_client, role_name):
     
     return sorted_policies, policy_count
 
-def get_policy_conditions(iam_client, role_name):
+def get_policy_conditions_and_denies(iam_client, role_name):
     conditions = []
+    deny_actions = []
     
-    # Get inline policy conditions
+    # Get inline policy conditions and denies
     inline_policies = iam_client.list_role_policies(RoleName=role_name)['PolicyNames']
     for policy_name in inline_policies:
         policy_document = iam_client.get_role_policy(RoleName=role_name, PolicyName=policy_name)['PolicyDocument']
         for statement in policy_document.get('Statement', []):
             if 'Condition' in statement:
                 conditions.append(statement['Condition'])
+            if statement.get('Effect') == 'Deny':
+                deny_actions.extend(statement.get('Action', []))
     
-    # Get managed policy conditions
+    # Get managed policy conditions and denies
     managed_policies = iam_client.list_attached_role_policies(RoleName=role_name)['AttachedPolicies']
     for policy in managed_policies:
         policy_arn = policy['PolicyArn']
@@ -54,8 +63,10 @@ def get_policy_conditions(iam_client, role_name):
         for statement in policy_document.get('Statement', []):
             if 'Condition' in statement:
                 conditions.append(statement['Condition'])
+            if statement.get('Effect') == 'Deny':
+                deny_actions.extend(statement.get('Action', []))
     
-    return conditions
+    return conditions, deny_actions
 
 def check_privileged_role(iam_client, role_name, only_privileged=True):
     tags_response = iam_client.list_role_tags(RoleName=role_name)
@@ -68,6 +79,44 @@ def check_privileged_role(iam_client, role_name, only_privileged=True):
         print(f"Processing role: '{role_name}'")
         return True, tags
 
+def check_privileged_actions(iam_client, role_name):
+    privileged_actions = []
+    can_modify_services = False
+    
+    # Check inline policies for privileged actions
+    inline_policies = iam_client.list_role_policies(RoleName=role_name)['PolicyNames']
+    for policy_name in inline_policies:
+        policy_document = iam_client.get_role_policy(RoleName=role_name, PolicyName=policy_name)['PolicyDocument']
+        for statement in policy_document.get('Statement', []):
+            if statement.get('Effect') == 'Allow':
+                actions = statement.get('Action', [])
+                if isinstance(actions, str):  # If single action
+                    actions = [actions]
+                for action in actions:
+                    for pattern in PRIVILEGED_ACTIONS_PATTERNS:
+                        if action.startswith(pattern[:-1]):  # Match action with pattern
+                            privileged_actions.append(action)
+                            can_modify_services = True
+    
+    # Check managed policies for privileged actions
+    managed_policies = iam_client.list_attached_role_policies(RoleName=role_name)['AttachedPolicies']
+    for policy in managed_policies:
+        policy_arn = policy['PolicyArn']
+        policy_version = iam_client.get_policy(PolicyArn=policy_arn)['Policy']['DefaultVersionId']
+        policy_document = iam_client.get_policy_version(PolicyArn=policy_arn, VersionId=policy_version)['PolicyVersion']['Document']
+        for statement in policy_document.get('Statement', []):
+            if statement.get('Effect') == 'Allow':
+                actions = statement.get('Action', [])
+                if isinstance(actions, str):  # If single action
+                    actions = [actions]
+                for action in actions:
+                    for pattern in PRIVILEGED_ACTIONS_PATTERNS:
+                        if action.startswith(pattern[:-1]):  # Match action with pattern
+                            privileged_actions.append(action)
+                            can_modify_services = True
+    
+    return can_modify_services, privileged_actions
+
 def process_roles(iam_client, only_privileged=True):
     roles = list_iam_roles(iam_client)
     role_data = []
@@ -78,11 +127,14 @@ def process_roles(iam_client, only_privileged=True):
         is_privileged, tags = check_privileged_role(iam_client, role_name, only_privileged)
         if is_privileged:
             policies, policy_count = get_combined_policies(iam_client, role_name)
-            conditions = get_policy_conditions(iam_client, role_name)
+            conditions, deny_actions = get_policy_conditions_and_denies(iam_client, role_name)
+            can_modify_services, privileged_actions = check_privileged_actions(iam_client, role_name)
             
             print(f"Combined policies for role {role_name}: {policies}")
             print(f"Policy count: {policy_count}")
             print(f"Conditions: {conditions}")
+            print(f"Deny Actions: {deny_actions}")
+            print(f"Can modify services: {can_modify_services}")
             print(f"Tags: {tags}")
             
             role_data.append({
@@ -90,6 +142,9 @@ def process_roles(iam_client, only_privileged=True):
                 'Policies': ', '.join(policies),  # Combined sorted policies
                 'PolicyCount': policy_count,
                 'Conditions': conditions if conditions else "None",  # Add conditions if available
+                'DenyActions': ', '.join(deny_actions) if deny_actions else "None",  # Add deny actions if any
+                'CanModifyServices': can_modify_services,
+                'PrivilegedActions': ', '.join(privileged_actions) if privileged_actions else "None",
                 'Tags': tags
             })
     
@@ -110,7 +165,7 @@ def write_to_csv(filename, fieldnames, data):
 
 def lambda_handler(event, context):
     iam_client = boto3.client('iam')
-    fieldnames = ['RoleName', 'Policies', 'PolicyCount', 'Conditions', 'Tags']
+    fieldnames = ['RoleName', 'Policies', 'PolicyCount', 'Conditions', 'DenyActions', 'CanModifyServices', 'PrivilegedActions', 'Tags']
     
     # Add an option to filter based on privilege tags
     only_privileged = event.get('only_privileged', True)
@@ -126,7 +181,7 @@ if __name__ == "__main__":
     session = boto3.Session()
     iam_client = session.client('iam')
     
-    fieldnames = ['RoleName', 'Policies', 'PolicyCount', 'Conditions', 'Tags']
+    fieldnames = ['RoleName', 'Policies', 'PolicyCount', 'Conditions', 'DenyActions', 'CanModifyServices', 'PrivilegedActions', 'Tags']
     
     # Change this value to True or False to filter on the Privileged tag
     only_privileged = True

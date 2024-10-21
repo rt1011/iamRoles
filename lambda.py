@@ -157,8 +157,8 @@ def process_roles(iam_client, only_privileged=True):
             conditions, deny_actions = get_policy_conditions_and_denies(iam_client, role_name)
             allow_actions_list, deny_actions_list = check_privileged_actions(iam_client, role_name)
             
-            # Count the number of actions in allow actions
-            allow_actions_count = sum(len(policy_actions.split(", ")) for policy_actions in allow_actions_list)
+            # Count the number of characters in allow actions
+            allow_actions_character_count = sum(len(action) for action in allow_actions_list)
 
             # Split allow actions into multiple columns, 30 per column or within Excel's character limit
             allow_actions_columns = split_allow_actions(allow_actions_list, "AllowActions")
@@ -172,7 +172,7 @@ def process_roles(iam_client, only_privileged=True):
             print(f"Deny Actions: {deny_actions_text}")
             print(f"Allow Actions: {allow_actions_list}")
             print(f"Tags: {tags}")
-            print(f"Allow Actions Count: {allow_actions_count}")
+            print(f"Allow Actions Character Count: {allow_actions_character_count}")
             
             # Add basic role data
             role_info = {
@@ -182,7 +182,7 @@ def process_roles(iam_client, only_privileged=True):
                 'Conditions': conditions if conditions else "None",  # Add conditions if available
                 'DenyActions': deny_actions_text,  # Single column for deny actions
                 'Tags': tags,
-                'AllowActionsCount': allow_actions_count  # Add the count of allow actions
+                'AllowActionsCharacterCount': allow_actions_character_count  # Add the character count of allow actions
             }
             
             # Merge with the split allow actions columns
@@ -202,7 +202,7 @@ def write_to_csv(filename, fieldnames, data):
 
 def lambda_handler(event, context):
     iam_client = boto3.client('iam')
-    fieldnames = ['RoleName', 'Policies', 'PolicyCount', 'Conditions', 'DenyActions', 'Tags', 'AllowActionsCount']
+    fieldnames = ['RoleName', 'Policies', 'PolicyCount', 'Conditions', 'DenyActions', 'Tags', 'AllowActionsCharacterCount']
     
     # Add an option to filter based on privilege tags
     only_privileged = event.get('only_privileged', True)
@@ -226,7 +226,7 @@ if __name__ == "__main__":
     session = boto3.Session()
     iam_client = session.client('iam')
     
-    fieldnames = ['RoleName', 'Policies', 'PolicyCount', 'Conditions', 'DenyActions', 'Tags', 'AllowActionsCount']
+    fieldnames = ['RoleName', 'Policies', 'PolicyCount', 'Conditions', 'DenyActions', 'Tags', 'AllowActionsCharacterCount']
     
     # Add option to split allow actions across multiple columns, 30 per column or character limit
     role_data = process_roles(iam_client, only_privileged=True)

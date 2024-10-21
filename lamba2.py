@@ -19,30 +19,54 @@ def list_iam_roles(iam_client):
     return roles
 
 def get_combined_policies(iam_client, role_name):
-    # Combine both inline and managed policies and sort them case-insensitively
     policies = []
-    
     inline_policies = iam_client.list_role_policies(RoleName=role_name)['PolicyNames']
     managed_policies = iam_client.list_attached_role_policies(RoleName=role_name)['AttachedPolicies']
     
     policies.extend(inline_policies)  # Add inline policies
     policies.extend([policy['PolicyName'] for policy in managed_policies])  # Add managed policies
     
-    return sorted(policies, key=lambda s: s.lower())  # Case-insensitive sorting
+    # Count of total policies
+    policy_count = len(policies)
+    
+    # Sort policies case-insensitively
+    sorted_policies = sorted(policies, key=lambda s: s.lower())
+    
+    return sorted_policies, policy_count
 
+def get_policy_conditions(iam_client, role_name):
+    conditions = []
+    
+    # Get inline policy conditions
+    inline_policies = iam_client.list_role_policies(RoleName=role_name)['PolicyNames']
+    for policy_name in inline_policies:
+        policy_document = iam_client.get_role_policy(RoleName=role_name, PolicyName=policy_name)['PolicyDocument']
+        for statement in policy_document.get('Statement', []):
+            if 'Condition' in statement:
+                conditions.append(statement['Condition'])
+    
+    # Get managed policy conditions
+    managed_policies = iam_client.list_attached_role_policies(RoleName=role_name)['AttachedPolicies']
+    for policy in managed_policies:
+        policy_arn = policy['PolicyArn']
+        policy_version = iam_client.get_policy(PolicyArn=policy_arn)['Policy']['DefaultVersionId']
+        policy_document = iam_client.get_policy_version(PolicyArn=policy_arn, VersionId=policy_version)['PolicyVersion']['Document']
+        for statement in policy_document.get('Statement', []):
+            if 'Condition' in statement:
+                conditions.append(statement['Condition'])
+    
+    return conditions
 
 def check_privileged_role(iam_client, role_name, only_privileged=True):
-    # Retrieve the tags for the role
     tags_response = iam_client.list_role_tags(RoleName=role_name)
     tags = {tag['Key']: tag['Value'] for tag in tags_response.get('Tags', [])}
     
-    # Skip non-privileged roles if filtering for privileged roles
-    if only_privileged and tags.get('Privileged') != 'Yes':  # Correct comparison
+    if only_privileged and tags.get('Privileged') != 'Yes':  # Case-sensitive comparison
         print(f"Skipping non-privileged role '{role_name}'")
-        return False
+        return False, tags
     else:
         print(f"Processing role: '{role_name}'")
-        return True
+        return True, tags
 
 def process_roles(iam_client, only_privileged=True):
     roles = list_iam_roles(iam_client)
@@ -51,12 +75,22 @@ def process_roles(iam_client, only_privileged=True):
     for role in roles:
         role_name = role['RoleName']
         
-        if check_privileged_role(iam_client, role_name, only_privileged):
-            policies = get_combined_policies(iam_client, role_name)
-            print(f"Combined policies for role {role_name}: {policies}")  # Print combined policies
+        is_privileged, tags = check_privileged_role(iam_client, role_name, only_privileged)
+        if is_privileged:
+            policies, policy_count = get_combined_policies(iam_client, role_name)
+            conditions = get_policy_conditions(iam_client, role_name)
+            
+            print(f"Combined policies for role {role_name}: {policies}")
+            print(f"Policy count: {policy_count}")
+            print(f"Conditions: {conditions}")
+            print(f"Tags: {tags}")
+            
             role_data.append({
                 'RoleName': role_name,
-                'Policies': ', '.join(policies)  # Combine policy names with comma
+                'Policies': ', '.join(policies),  # Combined sorted policies
+                'PolicyCount': policy_count,
+                'Conditions': conditions if conditions else "None",  # Add conditions if available
+                'Tags': tags
             })
     
     return role_data
@@ -76,10 +110,10 @@ def write_to_csv(filename, fieldnames, data):
 
 def lambda_handler(event, context):
     iam_client = boto3.client('iam')
-    fieldnames = ['RoleName', 'Policies']
+    fieldnames = ['RoleName', 'Policies', 'PolicyCount', 'Conditions', 'Tags']
     
     # Add an option to filter based on privilege tags
-    only_privileged = event.get('only_privileged', True)  # Use the input from the event to decide
+    only_privileged = event.get('only_privileged', True)
 
     role_data = process_roles(iam_client, only_privileged)
     
@@ -92,7 +126,7 @@ if __name__ == "__main__":
     session = boto3.Session()
     iam_client = session.client('iam')
     
-    fieldnames = ['RoleName', 'Policies']
+    fieldnames = ['RoleName', 'Policies', 'PolicyCount', 'Conditions', 'Tags']
     
     # Change this value to True or False to filter on the Privileged tag
     only_privileged = True

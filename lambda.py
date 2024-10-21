@@ -4,7 +4,6 @@ import os
 from datetime import datetime
 
 # Constants
-MAX_POLICY_ACTIONS_PER_COLUMN = 30
 EXCEL_CELL_LIMIT = 32767
 
 def assume_role(sts_client, acct_id, role_name="lambda1"):
@@ -118,8 +117,11 @@ def check_privileged_actions(iam_client, role_name):
     
     return allow_actions_list, deny_actions_list
 
-def split_allow_actions(allow_actions_list, prefix):
-    """Splits the allow actions into multiple columns respecting Excel's 32,767 character limit. Truncates at commas or other boundaries."""
+def split_allow_actions_by_character_limit(allow_actions_list):
+    """
+    Splits allow actions into multiple columns ensuring no column exceeds Excel's 32,767 character limit.
+    It truncates at boundaries (such as commas) to ensure the split happens after a full action is listed.
+    """
     allow_action_columns = {}
     current_column = []
     char_count = 0
@@ -130,7 +132,7 @@ def split_allow_actions(allow_actions_list, prefix):
         
         # Check if the next action would exceed the limit; if so, create a new column
         if (char_count + action_length) > EXCEL_CELL_LIMIT:
-            allow_action_columns[f"{prefix}_part_{column_index}"] = "; ".join(current_column)
+            allow_action_columns[f"AllowActions_part_{column_index}"] = "; ".join(current_column)
             column_index += 1
             current_column = []
             char_count = 0
@@ -141,7 +143,7 @@ def split_allow_actions(allow_actions_list, prefix):
 
     # Add the last column if there are remaining actions
     if current_column:
-        allow_action_columns[f"{prefix}_part_{column_index}"] = "; ".join(current_column)
+        allow_action_columns[f"AllowActions_part_{column_index}"] = "; ".join(current_column)
     
     return allow_action_columns
 
@@ -161,33 +163,23 @@ def process_roles(iam_client, only_privileged=True):
             # Count the number of characters in allow actions
             allow_actions_character_count = sum(len(action) for action in allow_actions_list)
 
-            # Split allow actions into multiple columns while ensuring no column exceeds Excel's character limit
-            allow_actions_columns = split_allow_actions(allow_actions_list, "AllowActions")
-            
-            # Join deny actions into one column
-            deny_actions_text = "; ".join(deny_actions_list)
-            
-            print(f"Combined policies for role {role_name}: {policies}")
-            print(f"Policy count: {policy_count}")
-            print(f"Conditions: {conditions}")
-            print(f"Deny Actions: {deny_actions_text}")
-            print(f"Allow Actions: {allow_actions_list}")
-            print(f"Tags: {tags}")
-            print(f"Allow Actions Character Count: {allow_actions_character_count}")
-            
-            # Add basic role data
+            # Create basic role info (without splitting the actions yet)
             role_info = {
                 'RoleName': role_name,
                 'Policies': ', '.join(policies),  # Combined sorted policies
                 'PolicyCount': policy_count,
                 'Conditions': conditions if conditions else "None",  # Add conditions if available
-                'DenyActions': deny_actions_text,  # Single column for deny actions
+                'DenyActions': "; ".join(deny_actions_list),  # Single column for deny actions
                 'Tags': tags,
                 'AllowActionsCharacterCount': allow_actions_character_count  # Add the character count of allow actions
             }
-            
+
+            # After collecting all the information, split the allow actions based on character limit
+            allow_action_columns = split_allow_actions_by_character_limit(allow_actions_list)
+
             # Merge with the split allow actions columns
-            role_info.update(allow_actions_columns)
+            role_info.update(allow_action_columns)
+
             role_data.append(role_info)
     
     return role_data

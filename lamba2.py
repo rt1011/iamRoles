@@ -19,7 +19,7 @@ def list_iam_roles(iam_client):
     return roles
 
 def get_combined_policies(iam_client, role_name):
-    # Combine both inline and managed policies and sort them
+    # Combine both inline and managed policies and sort them case-insensitively
     policies = []
     
     inline_policies = iam_client.list_role_policies(RoleName=role_name)['PolicyNames']
@@ -28,7 +28,8 @@ def get_combined_policies(iam_client, role_name):
     policies.extend(inline_policies)  # Add inline policies
     policies.extend([policy['PolicyName'] for policy in managed_policies])  # Add managed policies
     
-    return sorted(policies)  # Return sorted combined list
+    return sorted(policies, key=lambda s: s.lower())  # Case-insensitive sorting
+
 
 def check_privileged_role(iam_client, role_name, only_privileged=True):
     # Retrieve the tags for the role

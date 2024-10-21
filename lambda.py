@@ -117,14 +117,14 @@ def check_privileged_actions(iam_client, role_name):
     
     return allow_actions_list, deny_actions_list
 
-def split_policy_actions(policy_actions_list, prefix):
-    """Splits the policy actions into multiple columns with 30 actions per column."""
-    policy_action_columns = {}
-    for i in range(0, len(policy_actions_list), MAX_POLICY_ACTIONS_PER_COLUMN):
+def split_allow_actions(allow_actions_list, prefix):
+    """Splits the allow actions into multiple columns with 30 actions per column."""
+    allow_action_columns = {}
+    for i in range(0, len(allow_actions_list), MAX_POLICY_ACTIONS_PER_COLUMN):
         part_number = (i // MAX_POLICY_ACTIONS_PER_COLUMN) + 1
-        policy_action_columns[f"{prefix}_part_{part_number}"] = "; ".join(policy_actions_list[i:i + MAX_POLICY_ACTIONS_PER_COLUMN])
+        allow_action_columns[f"{prefix}_part_{part_number}"] = "; ".join(allow_actions_list[i:i + MAX_POLICY_ACTIONS_PER_COLUMN])
     
-    return policy_action_columns
+    return allow_action_columns
 
 def process_roles(iam_client, only_privileged=True):
     roles = list_iam_roles(iam_client)
@@ -139,14 +139,16 @@ def process_roles(iam_client, only_privileged=True):
             conditions, deny_actions = get_policy_conditions_and_denies(iam_client, role_name)
             allow_actions_list, deny_actions_list = check_privileged_actions(iam_client, role_name)
             
-            # Split allow and deny actions into columns, 30 per column
-            allow_actions_columns = split_policy_actions(allow_actions_list, "AllowActions")
-            deny_actions_columns = split_policy_actions(deny_actions_list, "DenyActions")
+            # Split allow actions into multiple columns, 30 per column
+            allow_actions_columns = split_allow_actions(allow_actions_list, "AllowActions")
+            
+            # Join deny actions into one column
+            deny_actions_text = "; ".join(deny_actions_list)
             
             print(f"Combined policies for role {role_name}: {policies}")
             print(f"Policy count: {policy_count}")
             print(f"Conditions: {conditions}")
-            print(f"Deny Actions: {deny_actions_list}")
+            print(f"Deny Actions: {deny_actions_text}")
             print(f"Allow Actions: {allow_actions_list}")
             print(f"Tags: {tags}")
             
@@ -156,12 +158,12 @@ def process_roles(iam_client, only_privileged=True):
                 'Policies': ', '.join(policies),  # Combined sorted policies
                 'PolicyCount': policy_count,
                 'Conditions': conditions if conditions else "None",  # Add conditions if available
+                'DenyActions': deny_actions_text,  # Single column for deny actions
                 'Tags': tags
             }
             
-            # Merge with the allow and deny actions columns
+            # Merge with the split allow actions columns
             role_info.update(allow_actions_columns)
-            role_info.update(deny_actions_columns)
             role_data.append(role_info)
     
     return role_data
@@ -177,7 +179,7 @@ def write_to_csv(filename, fieldnames, data):
 
 def lambda_handler(event, context):
     iam_client = boto3.client('iam')
-    fieldnames = ['RoleName', 'Policies', 'PolicyCount', 'Conditions', 'Tags']
+    fieldnames = ['RoleName', 'Policies', 'PolicyCount', 'Conditions', 'DenyActions', 'Tags']
     
     # Add an option to filter based on privilege tags
     only_privileged = event.get('only_privileged', True)
@@ -188,10 +190,9 @@ def lambda_handler(event, context):
     all_columns = set(col for row in role_data for col in row.keys())
     fieldnames.extend(sorted(all_columns - set(fieldnames)))
     
-    # Ensure AllowActions and DenyActions are the last columns
-    fieldnames = [col for col in fieldnames if not col.startswith('AllowActions') and not col.startswith('DenyActions')] \
-                 + [col for col in fieldnames if col.startswith('AllowActions')] \
-                 + [col for col in fieldnames if col.startswith('DenyActions')]
+    # Ensure AllowActions is the last column and DenyActions is included before it
+    fieldnames = [col for col in fieldnames if not col.startswith('AllowActions')] \
+                 + [col for col in fieldnames if col.startswith('AllowActions')]
     
     # Define filename with timestamp
     filename = f"iam_roles_{datetime.now().strftime('%Y%m%d%H%M%S')}.csv"
@@ -202,19 +203,18 @@ if __name__ == "__main__":
     session = boto3.Session()
     iam_client = session.client('iam')
     
-    fieldnames = ['RoleName', 'Policies', 'PolicyCount', 'Conditions', 'Tags']
+    fieldnames = ['RoleName', 'Policies', 'PolicyCount', 'Conditions', 'DenyActions', 'Tags']
     
-    # Add option to split allow/deny actions across multiple columns, 30 per column
+    # Add option to split allow actions across multiple columns, 30 per column
     role_data = process_roles(iam_client, only_privileged=True)
     
     # Collect additional action columns created dynamically
     all_columns = set(col for row in role_data for col in row.keys())
     fieldnames.extend(sorted(all_columns - set(fieldnames)))
 
-    # Ensure AllowActions and DenyActions are the last columns
-    fieldnames = [col for col in fieldnames if not col.startswith('AllowActions') and not col.startswith('DenyActions')] \
-                 + [col for col in fieldnames if col.startswith('AllowActions')] \
-                 + [col for col in fieldnames if col.startswith('DenyActions')]
+    # Ensure AllowActions is the last column and DenyActions is included before it
+    fieldnames = [col for col in fieldnames if not col.startswith('AllowActions')] \
+                 + [col for col in fieldnames if col.startswith('AllowActions')]
     
     # Define filename with timestamp
     filename = f"iam_roles_{datetime.now().strftime('%Y%m%d%H%M%S')}.csv"

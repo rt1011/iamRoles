@@ -5,6 +5,7 @@ from datetime import datetime
 
 # Constants
 MAX_POLICY_ACTIONS_PER_COLUMN = 30
+EXCEL_CELL_LIMIT = 32767
 
 def assume_role(sts_client, acct_id, role_name="lambda1"):
     # Function to assume role in the target account, if needed
@@ -118,11 +119,28 @@ def check_privileged_actions(iam_client, role_name):
     return allow_actions_list, deny_actions_list
 
 def split_allow_actions(allow_actions_list, prefix):
-    """Splits the allow actions into multiple columns with 30 actions per column."""
+    """Splits the allow actions into multiple columns with 30 actions per column or if exceeding Excel's 32,767 character limit."""
     allow_action_columns = {}
-    for i in range(0, len(allow_actions_list), MAX_POLICY_ACTIONS_PER_COLUMN):
-        part_number = (i // MAX_POLICY_ACTIONS_PER_COLUMN) + 1
-        allow_action_columns[f"{prefix}_part_{part_number}"] = "; ".join(allow_actions_list[i:i + MAX_POLICY_ACTIONS_PER_COLUMN])
+    current_column = []
+    char_count = 0
+    column_index = 1
+
+    for action in allow_actions_list:
+        action_length = len(action)
+        
+        # If adding this action exceeds the character limit or max actions, create a new column
+        if len(current_column) >= MAX_POLICY_ACTIONS_PER_COLUMN or (char_count + action_length > EXCEL_CELL_LIMIT):
+            allow_action_columns[f"{prefix}_part_{column_index}"] = "; ".join(current_column)
+            column_index += 1
+            current_column = []
+            char_count = 0
+        
+        current_column.append(action)
+        char_count += action_length
+    
+    # Add the last column if there are remaining actions
+    if current_column:
+        allow_action_columns[f"{prefix}_part_{column_index}"] = "; ".join(current_column)
     
     return allow_action_columns
 
@@ -139,7 +157,7 @@ def process_roles(iam_client, only_privileged=True):
             conditions, deny_actions = get_policy_conditions_and_denies(iam_client, role_name)
             allow_actions_list, deny_actions_list = check_privileged_actions(iam_client, role_name)
             
-            # Split allow actions into multiple columns, 30 per column
+            # Split allow actions into multiple columns, 30 per column or within Excel's character limit
             allow_actions_columns = split_allow_actions(allow_actions_list, "AllowActions")
             
             # Join deny actions into one column
@@ -205,7 +223,7 @@ if __name__ == "__main__":
     
     fieldnames = ['RoleName', 'Policies', 'PolicyCount', 'Conditions', 'DenyActions', 'Tags']
     
-    # Add option to split allow actions across multiple columns, 30 per column
+    # Add option to split allow actions across multiple columns, 30 per column or character limit
     role_data = process_roles(iam_client, only_privileged=True)
     
     # Collect additional action columns created dynamically

@@ -4,13 +4,7 @@ import os
 from datetime import datetime
 
 # Constants
-EXCEL_CELL_LIMIT = 32767
-
-# List of privileged action patterns to match against
-MODIFYING_ACTIONS = ['Put', 'Create', 'Delete', 'Update', 'Modify', 'Set', 
-                     'Add', 'Attach', 'Remove', 'Detach', 'Run', 'Start', 
-                     'Stop', 'Reboot', 'Terminate', 'Grant', 'Deny', 'Revoke', 
-                     'AssumeRole', 'PassRole']
+MAX_POLICY_ACTIONS_PER_COLUMN = 30
 
 def assume_role(sts_client, acct_id, role_name="lambda1"):
     # Function to assume role in the target account, if needed
@@ -123,15 +117,14 @@ def check_privileged_actions(iam_client, role_name):
     
     return allow_actions_list, deny_actions_list
 
-def split_long_text(long_text, prefix):
-    """Splits long text into multiple fields if it exceeds Excel's character limit."""
-    parts = []
-    while len(long_text) > EXCEL_CELL_LIMIT:
-        parts.append(long_text[:EXCEL_CELL_LIMIT])
-        long_text = long_text[EXCEL_CELL_LIMIT:]
+def split_policy_actions(policy_actions_list, prefix):
+    """Splits the policy actions into multiple columns with 30 actions per column."""
+    policy_action_columns = {}
+    for i in range(0, len(policy_actions_list), MAX_POLICY_ACTIONS_PER_COLUMN):
+        part_number = (i // MAX_POLICY_ACTIONS_PER_COLUMN) + 1
+        policy_action_columns[f"{prefix}_part_{part_number}"] = "; ".join(policy_actions_list[i:i + MAX_POLICY_ACTIONS_PER_COLUMN])
     
-    parts.append(long_text)
-    return {f"{prefix}_part_{i + 1}": part for i, part in enumerate(parts)}
+    return policy_action_columns
 
 def process_roles(iam_client, only_privileged=True):
     roles = list_iam_roles(iam_client)
@@ -146,24 +139,17 @@ def process_roles(iam_client, only_privileged=True):
             conditions, deny_actions = get_policy_conditions_and_denies(iam_client, role_name)
             allow_actions_list, deny_actions_list = check_privileged_actions(iam_client, role_name)
             
-            # Join the actions list into a single string for allow and deny actions
-            allow_actions_text = '; '.join(allow_actions_list)
-            deny_actions_text = '; '.join(deny_actions_list)
+            # Join the actions list for allow and deny actions
+            combined_policy_actions = allow_actions_list + deny_actions_list
             
-            # Combine allow and deny actions into one string for the PolicyActions column
-            combined_policy_actions = f"Allow: {allow_actions_text}; Deny: {deny_actions_text}"
-            
-            # Check if the combined actions string exceeds the Excel character limit and split if necessary
-            if len(combined_policy_actions) > EXCEL_CELL_LIMIT:
-                policy_actions_columns = split_long_text(combined_policy_actions, "PolicyActions")
-            else:
-                policy_actions_columns = {"PolicyActions": combined_policy_actions}
+            # Split policy actions into columns, 30 per column
+            policy_actions_columns = split_policy_actions(combined_policy_actions, "PolicyActions")
             
             print(f"Combined policies for role {role_name}: {policies}")
             print(f"Policy count: {policy_count}")
             print(f"Conditions: {conditions}")
-            print(f"Deny Actions: {deny_actions_text}")
-            print(f"Allow Actions: {allow_actions_text}")
+            print(f"Deny Actions: {deny_actions_list}")
+            print(f"Allow Actions: {allow_actions_list}")
             print(f"Policy Actions: {combined_policy_actions}")
             print(f"Tags: {tags}")
             
@@ -176,7 +162,7 @@ def process_roles(iam_client, only_privileged=True):
                 'Tags': tags
             }
             
-            # Merge with the split PolicyActions columns
+            # Merge with the policy actions columns
             role_info.update(policy_actions_columns)
             role_data.append(role_info)
     
@@ -193,7 +179,7 @@ def write_to_csv(filename, fieldnames, data):
 
 def lambda_handler(event, context):
     iam_client = boto3.client('iam')
-    fieldnames = ['RoleName', 'Policies', 'PolicyCount', 'Conditions', 'Tags', 'PolicyActions_part_1']
+    fieldnames = ['RoleName', 'Policies', 'PolicyCount', 'Conditions', 'Tags']
     
     # Add an option to filter based on privilege tags
     only_privileged = event.get('only_privileged', True)
@@ -216,9 +202,9 @@ if __name__ == "__main__":
     session = boto3.Session()
     iam_client = session.client('iam')
     
-    fieldnames = ['RoleName', 'Policies', 'PolicyCount', 'Conditions', 'Tags', 'PolicyActions_part_1']
+    fieldnames = ['RoleName', 'Policies', 'PolicyCount', 'Conditions', 'Tags']
     
-    # Add option to split long columns across multiple columns if needed
+    # Add option to split policy actions across multiple columns, 30 per column
     role_data = process_roles(iam_client, only_privileged=True)
     
     # Collect additional action columns created dynamically

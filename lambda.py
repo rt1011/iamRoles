@@ -83,51 +83,47 @@ def check_privileged_role(iam_client, role_name, only_privileged=True):
         return True, tags
 
 def check_privileged_actions(iam_client, role_name):
-    privileged_actions = []
-    all_actions_with_policy = {}  # Use a dictionary to group actions by policy
-    can_modify_services = False
+    allow_actions = {}
+    deny_actions = {}
     
-    # Check inline policies for privileged actions
+    # Check inline policies for allow/deny actions
     inline_policies = iam_client.list_role_policies(RoleName=role_name)['PolicyNames']
     for policy_name in inline_policies:
         policy_document = iam_client.get_role_policy(RoleName=role_name, PolicyName=policy_name)['PolicyDocument']
         for statement in policy_document.get('Statement', []):
+            actions = statement.get('Action', [])
+            if isinstance(actions, str):  # If single action
+                actions = [actions]
             if statement.get('Effect') == 'Allow':
-                actions = statement.get('Action', [])
-                if isinstance(actions, str):  # If single action
-                    actions = [actions]
-                # Add to the same policy entry in the dictionary
-                all_actions_with_policy.setdefault(policy_name, []).extend(actions)
-                for action in actions:
-                    if any(verb in action for verb in MODIFYING_ACTIONS) or '*' in action:  # Check for privileged actions
-                        privileged_actions.append(action)
-                        can_modify_services = True
-    
-    # Check managed policies for privileged actions
+                allow_actions.setdefault(policy_name, []).extend(actions)
+            elif statement.get('Effect') == 'Deny':
+                deny_actions.setdefault(policy_name, []).extend(actions)
+
+    # Check managed policies for allow/deny actions
     managed_policies = iam_client.list_attached_role_policies(RoleName=role_name)['AttachedPolicies']
     for policy in managed_policies:
         policy_arn = policy['PolicyArn']
         policy_version = iam_client.get_policy(PolicyArn=policy_arn)['Policy']['DefaultVersionId']
         policy_document = iam_client.get_policy_version(PolicyArn=policy_arn, VersionId=policy_version)['PolicyVersion']['Document']
         for statement in policy_document.get('Statement', []):
+            actions = statement.get('Action', [])
+            if isinstance(actions, str):  # If single action
+                actions = [actions]
             if statement.get('Effect') == 'Allow':
-                actions = statement.get('Action', [])
-                if isinstance(actions, str):  # If single action
-                    actions = [actions]
-                # Add to the same policy entry in the dictionary
-                all_actions_with_policy.setdefault(policy['PolicyName'], []).extend(actions)
-                for action in actions:
-                    if any(verb in action for verb in MODIFYING_ACTIONS) or '*' in action:  # Check for privileged actions
-                        privileged_actions.append(action)
-                        can_modify_services = True
-    
-    # Format the actions grouped by policy into a list of PolicyName[Actions]
-    all_actions_with_policy_list = [f"{policy_name}[{', '.join(sorted(set(actions), key=lambda x: x.lower()))}]"
-                                    for policy_name, actions in all_actions_with_policy.items()]
-    
-    return can_modify_services, privileged_actions, all_actions_with_policy_list
+                allow_actions.setdefault(policy['PolicyName'], []).extend(actions)
+            elif statement.get('Effect') == 'Deny':
+                deny_actions.setdefault(policy['PolicyName'], []).extend(actions)
 
-def split_long_text(long_text, prefix, column_number):
+    # Format the actions grouped by policy into a list of PolicyName[Actions]
+    allow_actions_list = [f"{policy_name}[{', '.join(sorted(set(actions), key=lambda x: x.lower()))}]"
+                          for policy_name, actions in allow_actions.items()]
+    
+    deny_actions_list = [f"{policy_name}[{', '.join(sorted(set(actions), key=lambda x: x.lower()))}]"
+                         for policy_name, actions in deny_actions.items()]
+    
+    return allow_actions_list, deny_actions_list
+
+def split_long_text(long_text, prefix):
     """Splits long text into multiple fields if it exceeds Excel's character limit."""
     parts = []
     while len(long_text) > EXCEL_CELL_LIMIT:
@@ -148,24 +144,28 @@ def process_roles(iam_client, only_privileged=True):
         if is_privileged:
             policies, policy_count = get_combined_policies(iam_client, role_name)
             conditions, deny_actions = get_policy_conditions_and_denies(iam_client, role_name)
-            can_modify_services, privileged_actions, all_actions_with_policy_list = check_privileged_actions(iam_client, role_name)
+            allow_actions_list, deny_actions_list = check_privileged_actions(iam_client, role_name)
             
-            # Join the actions list into a single string
-            all_actions_with_policy_text = '; '.join(all_actions_with_policy_list)
+            # Join the actions list into a single string for allow and deny actions
+            allow_actions_text = '; '.join(allow_actions_list)
+            deny_actions_text = '; '.join(deny_actions_list)
             
             # Check if the string exceeds the Excel character limit and split if necessary
-            if len(all_actions_with_policy_text) > EXCEL_CELL_LIMIT:
-                all_actions_with_policy_columns = split_long_text(all_actions_with_policy_text, "AllActionsWithPolicy", 1)
+            if len(allow_actions_text) > EXCEL_CELL_LIMIT:
+                allow_actions_columns = split_long_text(allow_actions_text, "AllowActions")
             else:
-                all_actions_with_policy_columns = {"AllActionsWithPolicy": all_actions_with_policy_text}
+                allow_actions_columns = {"AllowActions": allow_actions_text}
+            
+            if len(deny_actions_text) > EXCEL_CELL_LIMIT:
+                deny_actions_columns = split_long_text(deny_actions_text, "DenyActions")
+            else:
+                deny_actions_columns = {"DenyActions": deny_actions_text}
             
             print(f"Combined policies for role {role_name}: {policies}")
             print(f"Policy count: {policy_count}")
             print(f"Conditions: {conditions}")
-            print(f"Deny Actions: {deny_actions}")
-            print(f"Can modify services: {can_modify_services}")
-            print(f"Privileged Actions: {privileged_actions}")
-            print(f"All Actions with Policy: {all_actions_with_policy_text}")
+            print(f"Deny Actions: {deny_actions_text}")
+            print(f"Allow Actions: {allow_actions_text}")
             print(f"Tags: {tags}")
             
             # Add basic role data
@@ -174,14 +174,12 @@ def process_roles(iam_client, only_privileged=True):
                 'Policies': ', '.join(policies),  # Combined sorted policies
                 'PolicyCount': policy_count,
                 'Conditions': conditions if conditions else "None",  # Add conditions if available
-                'DenyActions': ', '.join(deny_actions) if deny_actions else "None",  # Add deny actions if any
-                'CanModifyServices': can_modify_services,
-                'PrivilegedActions': ', '.join(privileged_actions) if privileged_actions else "None",
                 'Tags': tags
             }
             
             # Merge with the split actions columns
-            role_info.update(all_actions_with_policy_columns)
+            role_info.update(allow_actions_columns)
+            role_info.update(deny_actions_columns)
             role_data.append(role_info)
     
     return role_data
@@ -197,7 +195,7 @@ def write_to_csv(filename, fieldnames, data):
 
 def lambda_handler(event, context):
     iam_client = boto3.client('iam')
-    fieldnames = ['RoleName', 'Policies', 'PolicyCount', 'Conditions', 'DenyActions', 'CanModifyServices', 'PrivilegedActions', 'Tags', 'AllActionsWithPolicy_part_1']
+    fieldnames = ['RoleName', 'Policies', 'PolicyCount', 'Conditions', 'Tags', 'AllowActions_part_1', 'DenyActions_part_1']
     
     # Add an option to filter based on privilege tags
     only_privileged = event.get('only_privileged', True)
@@ -217,7 +215,7 @@ if __name__ == "__main__":
     session = boto3.Session()
     iam_client = session.client('iam')
     
-    fieldnames = ['RoleName', 'Policies', 'PolicyCount', 'Conditions', 'DenyActions', 'CanModifyServices', 'PrivilegedActions', 'Tags', 'AllActionsWithPolicy_part_1']
+    fieldnames = ['RoleName', 'Policies', 'PolicyCount', 'Conditions', 'Tags', 'AllowActions_part_1', 'DenyActions_part_1']
     
     # Add option to split long columns across multiple columns if needed
     role_data = process_roles(iam_client, only_privileged=True)

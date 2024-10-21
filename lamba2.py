@@ -4,10 +4,10 @@ import os
 from datetime import datetime
 
 # List of privileged action patterns to match against
-PRIVILEGED_ACTIONS_PATTERNS = ['Put*', 'Create*', 'Delete*', 'Update*', 'Modify*', 'Set*',
-                               'Add*', 'Attach*', 'Remove*', 'Detach*', 'Run*', 'Start*', 
-                               'Stop*', 'Reboot*', 'Terminate*', 'Grant*', 'Deny*', 'Revoke*', 
-                               'AssumeRole', 'PassRole']
+MODIFYING_ACTIONS = ['Put', 'Create', 'Delete', 'Update', 'Modify', 'Set', 
+                     'Add', 'Attach', 'Remove', 'Detach', 'Run', 'Start', 
+                     'Stop', 'Reboot', 'Terminate', 'Grant', 'Deny', 'Revoke', 
+                     'AssumeRole', 'PassRole']
 
 def assume_role(sts_client, acct_id, role_name="lambda1"):
     # Function to assume role in the target account, if needed
@@ -93,10 +93,9 @@ def check_privileged_actions(iam_client, role_name):
                 if isinstance(actions, str):  # If single action
                     actions = [actions]
                 for action in actions:
-                    for pattern in PRIVILEGED_ACTIONS_PATTERNS:
-                        if action.startswith(pattern[:-1]):  # Match action with pattern
-                            privileged_actions.append(action)
-                            can_modify_services = True
+                    if any(verb in action for verb in MODIFYING_ACTIONS):  # Check for privileged actions
+                        privileged_actions.append(action)
+                        can_modify_services = True
     
     # Check managed policies for privileged actions
     managed_policies = iam_client.list_attached_role_policies(RoleName=role_name)['AttachedPolicies']
@@ -110,10 +109,9 @@ def check_privileged_actions(iam_client, role_name):
                 if isinstance(actions, str):  # If single action
                     actions = [actions]
                 for action in actions:
-                    for pattern in PRIVILEGED_ACTIONS_PATTERNS:
-                        if action.startswith(pattern[:-1]):  # Match action with pattern
-                            privileged_actions.append(action)
-                            can_modify_services = True
+                    if any(verb in action for verb in MODIFYING_ACTIONS):  # Check for privileged actions
+                        privileged_actions.append(action)
+                        can_modify_services = True
     
     return can_modify_services, privileged_actions
 
@@ -135,6 +133,7 @@ def process_roles(iam_client, only_privileged=True):
             print(f"Conditions: {conditions}")
             print(f"Deny Actions: {deny_actions}")
             print(f"Can modify services: {can_modify_services}")
+            print(f"Privileged Actions: {privileged_actions}")
             print(f"Tags: {tags}")
             
             role_data.append({

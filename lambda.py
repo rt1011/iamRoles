@@ -77,8 +77,8 @@ def check_privileged_role(iam_client, role_name, only_privileged=True):
         return True, tags
 
 def check_privileged_actions(iam_client, role_name):
-    allow_actions = {}
-    deny_actions = {}
+    allow_actions = []
+    deny_actions = []
     
     # Check inline policies for allow/deny actions
     inline_policies = iam_client.list_role_policies(RoleName=role_name)['PolicyNames']
@@ -89,9 +89,9 @@ def check_privileged_actions(iam_client, role_name):
             if isinstance(actions, str):  # If single action
                 actions = [actions]
             if statement.get('Effect') == 'Allow':
-                allow_actions.setdefault(policy_name, []).extend(actions)
+                allow_actions.append((policy_name, actions))
             elif statement.get('Effect') == 'Deny':
-                deny_actions.setdefault(policy_name, []).extend(actions)
+                deny_actions.append((policy_name, actions))
 
     # Check managed policies for allow/deny actions
     managed_policies = iam_client.list_attached_role_policies(RoleName=role_name)['AttachedPolicies']
@@ -104,18 +104,11 @@ def check_privileged_actions(iam_client, role_name):
             if isinstance(actions, str):  # If single action
                 actions = [actions]
             if statement.get('Effect') == 'Allow':
-                allow_actions.setdefault(policy['PolicyName'], []).extend(actions)
+                allow_actions.append((policy['PolicyName'], actions))
             elif statement.get('Effect') == 'Deny':
-                deny_actions.setdefault(policy['PolicyName'], []).extend(actions)
+                deny_actions.append((policy['PolicyName'], actions))
 
-    # Format the actions grouped by policy into a list of PolicyName[Actions]
-    allow_actions_list = [f"{policy_name}[{', '.join(sorted(set(actions), key=lambda x: x.lower()))}]"
-                          for policy_name, actions in allow_actions.items()]
-    
-    deny_actions_list = [f"{policy_name}[{', '.join(sorted(set(actions), key=lambda x: x.lower()))}]"
-                         for policy_name, actions in deny_actions.items()]
-    
-    return allow_actions_list, deny_actions_list
+    return allow_actions, deny_actions
 
 def extract_privileged_actions(allow_actions):
     """
@@ -124,8 +117,8 @@ def extract_privileged_actions(allow_actions):
     """
     privileged_actions = []
     
-    # Iterate over the dictionary of allow_actions (policy_name -> actions)
-    for policy_name, actions in allow_actions.items():
+    # Iterate over the list of allow_actions (policy_name, actions)
+    for policy_name, actions in allow_actions:
         privileged_actions_for_policy = [action for action in actions if "*" in action or any(keyword.lower() in action.lower() for keyword in PRIVILEGED_ACTIONS_KEYWORDS)]
         if privileged_actions_for_policy:
             privileged_actions.append(f"{policy_name}[{', '.join(sorted(set(privileged_actions_for_policy), key=lambda x: x.lower()))}]")
@@ -137,12 +130,13 @@ def can_modify_services(actions):
     Check if any of the actions are considered privileged (e.g., Create, Update, Modify, Delete)
     or contain a wildcard (*).
     """
-    for action in actions:
-        if "*" in action:
-            return True
-        for keyword in PRIVILEGED_ACTIONS_KEYWORDS:
-            if keyword.lower() in action.lower():
+    for _, action_list in actions:
+        for action in action_list:
+            if "*" in action:
                 return True
+            for keyword in PRIVILEGED_ACTIONS_KEYWORDS:
+                if keyword.lower() in action.lower():
+                    return True
     return False
 
 def process_roles(iam_client, only_privileged=True):
@@ -170,7 +164,7 @@ def process_roles(iam_client, only_privileged=True):
                 'Policies': ', '.join(policies),  # Combined sorted policies
                 'PolicyCount': policy_count,
                 'Conditions': conditions if conditions else "None",  # Add conditions if available
-                'DenyActions': "; ".join(deny_actions_list),  # Single column for deny actions
+                'DenyActions': "; ".join([f"{policy}[{', '.join(actions)}]" for policy, actions in deny_actions_list]),  # Single column for deny actions
                 'Tags': tags,
                 'PrivilegedActions': "; ".join(privileged_actions) if privileged_actions else "None",  # Privileged actions formatted
                 'CanModifyServices': can_modify  # True if role can modify services

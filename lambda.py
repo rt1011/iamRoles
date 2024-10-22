@@ -4,8 +4,7 @@ import os
 from datetime import datetime
 
 # Constants
-EXCEL_CELL_LIMIT = 32767  # Limit for a single cell in Excel
-PRIVILEGED_ACTIONS_KEYWORDS = ["Create", "Update", "Modify", "Put", "Delete", "Write"]
+PRIVILEGED_ACTIONS_KEYWORDS = ["Create", "Update", "Modify", "Put", "Delete", "Write", "Attach", "Detach"]
 
 def assume_role(sts_client, acct_id, role_name="lambda1"):
     # Function to assume role in the target account, if needed
@@ -118,6 +117,20 @@ def check_privileged_actions(iam_client, role_name):
     
     return allow_actions_list, deny_actions_list
 
+def extract_privileged_actions(allow_actions):
+    """
+    Extract privileged actions from the list of allowed actions.
+    Actions are considered privileged if they match certain keywords or contain a wildcard (*).
+    """
+    privileged_actions = []
+    
+    for policy_name, actions in allow_actions.items():
+        privileged_actions_for_policy = [action for action in actions if "*" in action or any(keyword.lower() in action.lower() for keyword in PRIVILEGED_ACTIONS_KEYWORDS)]
+        if privileged_actions_for_policy:
+            privileged_actions.append(f"{policy_name}[{', '.join(sorted(set(privileged_actions_for_policy), key=lambda x: x.lower()))}]")
+    
+    return privileged_actions
+
 def can_modify_services(actions):
     """
     Check if any of the actions are considered privileged (e.g., Create, Update, Modify, Delete)
@@ -144,6 +157,9 @@ def process_roles(iam_client, only_privileged=True):
             conditions, deny_actions = get_policy_conditions_and_denies(iam_client, role_name)
             allow_actions_list, deny_actions_list = check_privileged_actions(iam_client, role_name)
             
+            # Extract privileged actions (in the format PolicyName[Actions])
+            privileged_actions = extract_privileged_actions(allow_actions_list)
+
             # Check if the actions include any privileged actions or wildcard (*)
             can_modify = can_modify_services(allow_actions_list)
 
@@ -155,6 +171,7 @@ def process_roles(iam_client, only_privileged=True):
                 'Conditions': conditions if conditions else "None",  # Add conditions if available
                 'DenyActions': "; ".join(deny_actions_list),  # Single column for deny actions
                 'Tags': tags,
+                'PrivilegedActions': "; ".join(privileged_actions) if privileged_actions else "None",  # Privileged actions formatted
                 'CanModifyServices': can_modify  # True if role can modify services
             }
 
@@ -173,19 +190,12 @@ def write_to_csv(filename, fieldnames, data):
 
 def lambda_handler(event, context):
     iam_client = boto3.client('iam')
-    fieldnames = ['RoleName', 'Policies', 'PolicyCount', 'Conditions', 'DenyActions', 'Tags', 'CanModifyServices']
+    fieldnames = ['RoleName', 'Policies', 'PolicyCount', 'Conditions', 'DenyActions', 'Tags', 'PrivilegedActions', 'CanModifyServices']
     
     # Add an option to filter based on privilege tags
     only_privileged = event.get('only_privileged', True)
 
     role_data = process_roles(iam_client, only_privileged)
-    
-    # Collect additional action columns created dynamically
-    all_columns = set(col for row in role_data for col in row.keys())
-    fieldnames.extend(sorted(all_columns - set(fieldnames)))
-    
-    # Ensure CanModifyServices is the last column
-    fieldnames = [col for col in fieldnames if col != 'CanModifyServices'] + ['CanModifyServices']
     
     # Define filename with timestamp
     filename = f"iam_roles_{datetime.now().strftime('%Y%m%d%H%M%S')}.csv"
@@ -196,7 +206,7 @@ if __name__ == "__main__":
     session = boto3.Session()
     iam_client = session.client('iam')
     
-    fieldnames = ['RoleName', 'Policies', 'PolicyCount', 'Conditions', 'DenyActions', 'Tags', 'CanModifyServices']
+    fieldnames = ['RoleName', 'Policies', 'PolicyCount', 'Conditions', 'DenyActions', 'Tags', 'PrivilegedActions', 'CanModifyServices']
     
     # Process roles and check privileged actions
     role_data = process_roles(iam_client, only_privileged=True)

@@ -208,20 +208,7 @@ def write_to_csv(filename, fieldnames, data):
             writer.writerow(row)
     print(f"CSV written: {filename}")
 
-def lambda_handler(event, context):
-    iam_client = boto3.client('iam')
-    fieldnames = ['RoleName', 'Policies', 'PolicyCount', 'Conditions', 'DenyActions', 'Tags', 'PrivilegedActions', 'CanModifyServices']
-    
-    # Add an option to filter based on privilege tags
-    only_privileged = event.get('only_privileged', True)
-
-    role_data = process_roles(iam_client, only_privileged)
-    
-    # Define filename with timestamp
-    filename = f"iam_roles_{datetime.now().strftime('%Y%m%d%H%M%S')}.csv"
-    write_to_csv(filename, fieldnames, role_data)
-
-if __name__ "__main__":
+if __name__ == "__main__":
     # Running in CloudShell
     session = boto3.Session()
     iam_client = session.client('iam')

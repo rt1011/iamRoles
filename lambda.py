@@ -124,6 +124,7 @@ def extract_privileged_actions(allow_actions):
     """
     privileged_actions = []
     
+    # Iterate over the dictionary of allow_actions (policy_name -> actions)
     for policy_name, actions in allow_actions.items():
         privileged_actions_for_policy = [action for action in actions if "*" in action or any(keyword.lower() in action.lower() for keyword in PRIVILEGED_ACTIONS_KEYWORDS)]
         if privileged_actions_for_policy:

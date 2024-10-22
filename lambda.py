@@ -78,18 +78,24 @@ def check_privileged_role(iam_client, role_name, only_privileged=True):
 
 def is_privileged_action(action):
     """
-    Check if an action is privileged based on keywords.
-    The action must start with a keyword from PRIVILEGED_ACTIONS_KEYWORDS.
+    Check if an action is privileged based on keywords and exact wildcard matching.
+    The action must:
+      1. Be exactly "*".
+      2. Start with a keyword from PRIVILEGED_ACTIONS_KEYWORDS.
     """
     # Split the action by ':' to separate service from action (e.g., "s3:GetObject" -> "GetObject")
     action_name = action.split(":")[-1]
     
+    # Include actions that are exactly "*"
+    if action_name == "*":
+        return True
+
     # Check if action starts with any privileged keyword
     for keyword in PRIVILEGED_ACTIONS_KEYWORDS:
         if action_name.lower().startswith(keyword.lower()):
             return True
     
-    # If it does not match privileged actions, return False
+    # If it does not match "*", or privileged actions, return False
     return False
 
 def check_privileged_actions(iam_client, role_name):
@@ -129,7 +135,7 @@ def check_privileged_actions(iam_client, role_name):
 def extract_privileged_actions(allow_actions):
     """
     Extract privileged actions from the list of allowed actions.
-    Actions are considered privileged if they start with privileged keywords.
+    Actions are considered privileged if they are exactly "*" or start with privileged keywords.
     """
     privileged_actions = []
     
@@ -143,7 +149,8 @@ def extract_privileged_actions(allow_actions):
 
 def can_modify_services(actions):
     """
-    Check if any of the actions are considered privileged (e.g., Create, Update, Modify, Delete).
+    Check if any of the actions are considered privileged (e.g., Create, Update, Modify, Delete)
+    or are exactly "*".
     """
     for _, action_list in actions:
         for action in action_list:
@@ -167,7 +174,7 @@ def process_roles(iam_client, only_privileged=True):
             # Extract privileged actions (in the format PolicyName[Actions])
             privileged_actions = extract_privileged_actions(allow_actions_list)
 
-            # Check if the actions include any privileged actions
+            # Check if the actions include any privileged actions or "*"
             can_modify = can_modify_services(allow_actions_list)
 
             # Create basic role info (including whether it can modify services)

@@ -84,18 +84,21 @@ def is_privileged_action(action):
     The action must contain a keyword from PRIVILEGED_ACTIONS_KEYWORDS or a wildcard (*),
     but it should not match non-privileged actions like Get*, List*, Describe*.
     """
+    # Split the action by ':' to separate service from action (e.g., "s3:GetObject" -> "GetObject")
+    action_name = action.split(":")[-1]
+    
     # Check if action contains a privileged keyword
     for keyword in PRIVILEGED_ACTIONS_KEYWORDS:
-        if keyword.lower() in action.lower():
+        if keyword.lower() in action_name.lower():
             return True
     
-    # Exclude non-privileged actions like Get*, List*, Describe* even if they contain *
+    # Exclude non-privileged actions like Get*, List*, Describe*
     for non_privileged in NON_PRIVILEGED_ACTIONS:
-        if action.lower().startswith(non_privileged.lower()):
+        if action_name.lower().startswith(non_privileged.lower()):
             return False
     
     # Consider wildcard (*) as privileged only if it does not start with Get, List, or Describe
-    if "*" in action:
+    if "*" in action_name:
         return True
     
     return False
@@ -218,7 +221,7 @@ def lambda_handler(event, context):
     filename = f"iam_roles_{datetime.now().strftime('%Y%m%d%H%M%S')}.csv"
     write_to_csv(filename, fieldnames, role_data)
 
-if __name__ == "__main__":
+if __name__ "__main__":
     # Running in CloudShell
     session = boto3.Session()
     iam_client = session.client('iam')

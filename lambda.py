@@ -4,7 +4,8 @@ import os
 from datetime import datetime
 
 # Constants
-EXCEL_CELL_LIMIT = 32767
+EXCEL_CELL_LIMIT = 32767  # Limit for a single cell in Excel
+PRIVILEGED_ACTIONS_KEYWORDS = ["Create", "Update", "Modify", "Put", "Delete", "Write"]
 
 def assume_role(sts_client, acct_id, role_name="lambda1"):
     # Function to assume role in the target account, if needed
@@ -117,35 +118,18 @@ def check_privileged_actions(iam_client, role_name):
     
     return allow_actions_list, deny_actions_list
 
-def split_allow_actions_by_character_limit(allow_actions_list):
+def can_modify_services(actions):
     """
-    Splits allow actions into multiple columns ensuring no column exceeds Excel's 32,767 character limit.
-    It truncates at boundaries (such as commas) to ensure the split happens after a full action is listed.
+    Check if any of the actions are considered privileged (e.g., Create, Update, Modify, Delete)
+    or contain a wildcard (*).
     """
-    allow_action_columns = {}
-    current_column = []
-    char_count = 0
-    column_index = 1
-
-    for action in allow_actions_list:
-        action_length = len(action)
-        
-        # Check if the next action would exceed the limit; if so, create a new column
-        if (char_count + action_length) > EXCEL_CELL_LIMIT:
-            allow_action_columns[f"AllowActions_part_{column_index}"] = "; ".join(current_column)
-            column_index += 1
-            current_column = []
-            char_count = 0
-        
-        # Add action to current column and increment char count
-        current_column.append(action)
-        char_count += action_length + 2  # +2 accounts for the "; " separator
-
-    # Add the last column if there are remaining actions
-    if current_column:
-        allow_action_columns[f"AllowActions_part_{column_index}"] = "; ".join(current_column)
-    
-    return allow_action_columns
+    for action in actions:
+        if "*" in action:
+            return True
+        for keyword in PRIVILEGED_ACTIONS_KEYWORDS:
+            if keyword.lower() in action.lower():
+                return True
+    return False
 
 def process_roles(iam_client, only_privileged=True):
     roles = list_iam_roles(iam_client)
@@ -160,10 +144,10 @@ def process_roles(iam_client, only_privileged=True):
             conditions, deny_actions = get_policy_conditions_and_denies(iam_client, role_name)
             allow_actions_list, deny_actions_list = check_privileged_actions(iam_client, role_name)
             
-            # Count the number of characters in allow actions
-            allow_actions_character_count = sum(len(action) for action in allow_actions_list)
+            # Check if the actions include any privileged actions or wildcard (*)
+            can_modify = can_modify_services(allow_actions_list)
 
-            # Create basic role info (without splitting the actions yet)
+            # Create basic role info (including whether it can modify services)
             role_info = {
                 'RoleName': role_name,
                 'Policies': ', '.join(policies),  # Combined sorted policies
@@ -171,14 +155,8 @@ def process_roles(iam_client, only_privileged=True):
                 'Conditions': conditions if conditions else "None",  # Add conditions if available
                 'DenyActions': "; ".join(deny_actions_list),  # Single column for deny actions
                 'Tags': tags,
-                'AllowActionsCharacterCount': allow_actions_character_count  # Add the character count of allow actions
+                'CanModifyServices': can_modify  # True if role can modify services
             }
-
-            # After collecting all the information, split the allow actions based on character limit
-            allow_action_columns = split_allow_actions_by_character_limit(allow_actions_list)
-
-            # Merge with the split allow actions columns
-            role_info.update(allow_action_columns)
 
             role_data.append(role_info)
     
@@ -195,7 +173,7 @@ def write_to_csv(filename, fieldnames, data):
 
 def lambda_handler(event, context):
     iam_client = boto3.client('iam')
-    fieldnames = ['RoleName', 'Policies', 'PolicyCount', 'Conditions', 'DenyActions', 'Tags', 'AllowActionsCharacterCount']
+    fieldnames = ['RoleName', 'Policies', 'PolicyCount', 'Conditions', 'DenyActions', 'Tags', 'CanModifyServices']
     
     # Add an option to filter based on privilege tags
     only_privileged = event.get('only_privileged', True)
@@ -206,9 +184,8 @@ def lambda_handler(event, context):
     all_columns = set(col for row in role_data for col in row.keys())
     fieldnames.extend(sorted(all_columns - set(fieldnames)))
     
-    # Ensure AllowActions is the last column and DenyActions is included before it
-    fieldnames = [col for col in fieldnames if not col.startswith('AllowActions')] \
-                 + [col for col in fieldnames if col.startswith('AllowActions')]
+    # Ensure CanModifyServices is the last column
+    fieldnames = [col for col in fieldnames if col != 'CanModifyServices'] + ['CanModifyServices']
     
     # Define filename with timestamp
     filename = f"iam_roles_{datetime.now().strftime('%Y%m%d%H%M%S')}.csv"
@@ -219,18 +196,10 @@ if __name__ == "__main__":
     session = boto3.Session()
     iam_client = session.client('iam')
     
-    fieldnames = ['RoleName', 'Policies', 'PolicyCount', 'Conditions', 'DenyActions', 'Tags', 'AllowActionsCharacterCount']
+    fieldnames = ['RoleName', 'Policies', 'PolicyCount', 'Conditions', 'DenyActions', 'Tags', 'CanModifyServices']
     
-    # Add option to split allow actions across multiple columns, 30 per column or character limit
+    # Process roles and check privileged actions
     role_data = process_roles(iam_client, only_privileged=True)
-    
-    # Collect additional action columns created dynamically
-    all_columns = set(col for row in role_data for col in row.keys())
-    fieldnames.extend(sorted(all_columns - set(fieldnames)))
-
-    # Ensure AllowActions is the last column and DenyActions is included before it
-    fieldnames = [col for col in fieldnames if not col.startswith('AllowActions')] \
-                 + [col for col in fieldnames if col.startswith('AllowActions')]
     
     # Define filename with timestamp
     filename = f"iam_roles_{datetime.now().strftime('%Y%m%d%H%M%S')}.csv"

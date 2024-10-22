@@ -5,6 +5,7 @@ from datetime import datetime
 
 # Constants: Actions considered privileged (able to modify resources)
 PRIVILEGED_ACTIONS_KEYWORDS = ["Create", "Update", "Modify", "Put", "Delete", "Write", "Attach", "Detach"]
+NON_PRIVILEGED_ACTIONS = ["Get", "List", "Describe"]
 
 def assume_role(sts_client, acct_id, role_name="lambda1"):
     # Function to assume role in the target account, if needed
@@ -76,6 +77,28 @@ def check_privileged_role(iam_client, role_name, only_privileged=True):
         print(f"Processing role: '{role_name}'")
         return True, tags
 
+def is_privileged_action(action):
+    """
+    Check if an action is privileged based on keywords and wildcard matching.
+    The action must contain a keyword from PRIVILEGED_ACTIONS_KEYWORDS or a wildcard (*),
+    but it should not match non-privileged actions like Get*, List*, Describe*.
+    """
+    # Check if action contains a privileged keyword
+    for keyword in PRIVILEGED_ACTIONS_KEYWORDS:
+        if keyword.lower() in action.lower():
+            return True
+    
+    # Exclude non-privileged actions like Get*, List*, Describe* even if they contain *
+    for non_privileged in NON_PRIVILEGED_ACTIONS:
+        if action.lower().startswith(non_privileged.lower()):
+            return False
+    
+    # Consider wildcard (*) as privileged only if it does not start with Get, List, or Describe
+    if "*" in action:
+        return True
+    
+    return False
+
 def check_privileged_actions(iam_client, role_name):
     allow_actions = []
     deny_actions = []
@@ -113,13 +136,14 @@ def check_privileged_actions(iam_client, role_name):
 def extract_privileged_actions(allow_actions):
     """
     Extract privileged actions from the list of allowed actions.
-    Actions are considered privileged if they match certain keywords or contain a wildcard (*).
+    Actions are considered privileged if they match certain keywords or contain a wildcard (*),
+    excluding actions like Get*, List*, Describe*.
     """
     privileged_actions = []
     
     # Iterate over the list of allow_actions (policy_name, actions)
     for policy_name, actions in allow_actions:
-        privileged_actions_for_policy = [action for action in actions if "*" in action or any(keyword.lower() in action.lower() for keyword in PRIVILEGED_ACTIONS_KEYWORDS)]
+        privileged_actions_for_policy = [action for action in actions if is_privileged_action(action)]
         if privileged_actions_for_policy:
             privileged_actions.append(f"{policy_name}[{', '.join(sorted(set(privileged_actions_for_policy), key=lambda x: x.lower()))}]")
     
@@ -128,15 +152,12 @@ def extract_privileged_actions(allow_actions):
 def can_modify_services(actions):
     """
     Check if any of the actions are considered privileged (e.g., Create, Update, Modify, Delete)
-    or contain a wildcard (*).
+    or contain a wildcard (*), excluding Get*, List*, Describe*.
     """
     for _, action_list in actions:
         for action in action_list:
-            if "*" in action:
+            if is_privileged_action(action):
                 return True
-            for keyword in PRIVILEGED_ACTIONS_KEYWORDS:
-                if keyword.lower() in action.lower():
-                    return True
     return False
 
 def process_roles(iam_client, only_privileged=True):

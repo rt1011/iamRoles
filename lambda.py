@@ -3,7 +3,7 @@ import csv
 import os
 from datetime import datetime
 
-# Constants
+# Constants: Actions considered privileged (able to modify resources)
 PRIVILEGED_ACTIONS_KEYWORDS = ["Create", "Update", "Modify", "Put", "Delete", "Write", "Attach", "Detach"]
 
 def assume_role(sts_client, acct_id, role_name="lambda1"):

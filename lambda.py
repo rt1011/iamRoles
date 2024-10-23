@@ -3,13 +3,29 @@ import boto3
 # Constants: Privileged actions keywords that modify resources
 PRIVILEGED_ACTIONS_KEYWORDS = ["Create", "Update", "Modify", "Put", "Delete", "Write", "Attach", "Detach"]
 
-def assume_role(sts_client, acct_id, role_name="lambda1"):
-    # Function to assume role in the target account, if needed
+def jump_accounts(account_id, sts_client):
+    """
+    Assumes a role in the target account using the provided account ID and STS client.
+    """
     response = sts_client.assume_role(
-        RoleArn=f"arn:aws:iam::{acct_id}:role/{role_name}",
-        RoleSessionName="AssumeRoleSession"
+        RoleArn=f"arn:aws:iam::{account_id}:role/lambda1",
+        RoleSessionName="JumpAccountSession"
     )
     return response['Credentials']
+
+def assume_role(account_id, sts_client):
+    """
+    Uses jump_accounts to assume a role in the given account and returns an IAM client.
+    """
+    credentials = jump_accounts(account_id, sts_client)
+    
+    # Return an IAM client with the temporary credentials
+    return boto3.client(
+        'iam',
+        aws_access_key_id=credentials['AccessKeyId'],
+        aws_secret_access_key=credentials['SecretAccessKey'],
+        aws_session_token=credentials['SessionToken']
+    )
 
 def list_iam_roles(iam_client):
     roles = []
@@ -26,10 +42,8 @@ def get_combined_policies(iam_client, role_name):
     policies.extend(inline_policies)  # Add inline policies
     policies.extend([policy['PolicyName'] for policy in managed_policies])  # Add managed policies
     
-    # Count of total policies
     policy_count = len(policies)
     
-    # Sort policies case-insensitively
     sorted_policies = sorted(policies, key=lambda s: s.lower())
     
     return sorted_policies, policy_count
@@ -38,7 +52,6 @@ def get_policy_conditions_and_denies(iam_client, role_name):
     conditions = []
     deny_actions = []
     
-    # Get inline policy conditions and denies
     inline_policies = iam_client.list_role_policies(RoleName=role_name)['PolicyNames']
     for policy_name in inline_policies:
         policy_document = iam_client.get_role_policy(RoleName=role_name, PolicyName=policy_name)['PolicyDocument']
@@ -48,7 +61,6 @@ def get_policy_conditions_and_denies(iam_client, role_name):
             if statement.get('Effect') == 'Deny':
                 deny_actions.extend(statement.get('Action', []))
     
-    # Get managed policy conditions and denies
     managed_policies = iam_client.list_attached_role_policies(RoleName=role_name)['AttachedPolicies']
     for policy in managed_policies:
         policy_arn = policy['PolicyArn']
@@ -66,25 +78,16 @@ def check_privileged_role(iam_client, role_name, only_privileged=True):
     tags_response = iam_client.list_role_tags(RoleName=role_name)
     tags = {tag['Key']: tag['Value'] for tag in tags_response.get('Tags', [])}
     
-    if only_privileged and tags.get('Privileged') != 'Yes':  # Case-sensitive comparison
+    if only_privileged and tags.get('Privileged') != 'Yes':
         return False, tags
     return True, tags
 
 def is_privileged_action(action):
-    """
-    Check if an action is privileged based on keywords and exact wildcard matching.
-    The action must:
-      1. Be exactly "*".
-      2. Start with a keyword from PRIVILEGED_ACTIONS_KEYWORDS.
-    """
-    # Split the action by ':' to separate service from action (e.g., "s3:GetObject" -> "GetObject")
     action_name = action.split(":")[-1]
     
-    # Include actions that are exactly "*"
     if action_name == "*":
         return True
 
-    # Check if action starts with any privileged keyword
     for keyword in PRIVILEGED_ACTIONS_KEYWORDS:
         if action_name.lower().startswith(keyword.lower()):
             return True
@@ -95,20 +98,18 @@ def check_privileged_actions(iam_client, role_name):
     allow_actions = []
     deny_actions = []
     
-    # Check inline policies for allow/deny actions
     inline_policies = iam_client.list_role_policies(RoleName=role_name)['PolicyNames']
     for policy_name in inline_policies:
         policy_document = iam_client.get_role_policy(RoleName=role_name, PolicyName=policy_name)['PolicyDocument']
         for statement in policy_document.get('Statement', []):
             actions = statement.get('Action', [])
-            if isinstance(actions, str):  # If single action
+            if isinstance(actions, str):
                 actions = [actions]
             if statement.get('Effect') == 'Allow':
                 allow_actions.append((policy_name, actions))
             elif statement.get('Effect') == 'Deny':
                 deny_actions.append((policy_name, actions))
 
-    # Check managed policies for allow/deny actions
     managed_policies = iam_client.list_attached_role_policies(RoleName=role_name)['AttachedPolicies']
     for policy in managed_policies:
         policy_arn = policy['PolicyArn']
@@ -116,7 +117,7 @@ def check_privileged_actions(iam_client, role_name):
         policy_document = iam_client.get_policy_version(PolicyArn=policy_arn, VersionId=policy_version)['PolicyVersion']['Document']
         for statement in policy_document.get('Statement', []):
             actions = statement.get('Action', [])
-            if isinstance(actions, str):  # If single action
+            if isinstance(actions, str):
                 actions = [actions]
             if statement.get('Effect') == 'Allow':
                 allow_actions.append((policy['PolicyName'], actions))
@@ -126,13 +127,8 @@ def check_privileged_actions(iam_client, role_name):
     return allow_actions, deny_actions
 
 def extract_privileged_actions(allow_actions):
-    """
-    Extract privileged actions from the list of allowed actions.
-    Actions are considered privileged if they are exactly "*" or start with privileged keywords.
-    """
     privileged_actions = []
     
-    # Iterate over the list of allow_actions (policy_name, actions)
     for policy_name, actions in allow_actions:
         privileged_actions_for_policy = [action for action in actions if is_privileged_action(action)]
         if privileged_actions_for_policy:
@@ -141,50 +137,51 @@ def extract_privileged_actions(allow_actions):
     return privileged_actions
 
 def can_modify_services(actions):
-    """
-    Check if any of the actions are considered privileged (e.g., Create, Update, Modify, Delete)
-    or are exactly "*".
-    """
     for _, action_list in actions:
         for action in action_list:
             if is_privileged_action(action):
                 return True
     return False
 
-def gather_iam_roles_from_all_accounts(iam_client, only_privileged=True):
-    roles = list_iam_roles(iam_client)
+def gather_iam_roles_from_all_accounts(account_aliases, only_privileged=True):
+    """
+    Gathers IAM roles from all accounts listed in account_aliases by assuming roles in those accounts.
+    """
+    sts_client = boto3.client('sts')  # Initialize STS client
+    fieldnames = ['AccountID', 'AccountAlias', 'RoleName', 'Policies', 'PolicyCount', 'Conditions', 'DenyActions', 'Tags', 'PrivilegedActions', 'CanModifyServices']
     role_data = []
-    
-    # Define fieldnames within the function
-    fieldnames = ['RoleName', 'Policies', 'PolicyCount', 'Conditions', 'DenyActions', 'Tags', 'PrivilegedActions', 'CanModifyServices']
-    
-    for role in roles:
-        role_name = role['RoleName']
+
+    for account_id, account_name in account_aliases.items():
+        print(f"Processing account {account_name} ({account_id})")
+        iam_client = assume_role(account_id, sts_client)  # Assume role in the target account
         
-        is_privileged, tags = check_privileged_role(iam_client, role_name, only_privileged)
-        if is_privileged:
-            policies, policy_count = get_combined_policies(iam_client, role_name)
-            conditions, deny_actions = get_policy_conditions_and_denies(iam_client, role_name)
-            allow_actions_list, deny_actions_list = check_privileged_actions(iam_client, role_name)
+        roles = list_iam_roles(iam_client)
+
+        for role in roles:
+            role_name = role['RoleName']
+            is_privileged, tags = check_privileged_role(iam_client, role_name, only_privileged)
             
-            # Extract privileged actions (in the format PolicyName[Actions])
-            privileged_actions = extract_privileged_actions(allow_actions_list)
+            if is_privileged:
+                policies, policy_count = get_combined_policies(iam_client, role_name)
+                conditions, deny_actions = get_policy_conditions_and_denies(iam_client, role_name)
+                allow_actions_list, deny_actions_list = check_privileged_actions(iam_client, role_name)
+                
+                privileged_actions = extract_privileged_actions(allow_actions_list)
+                can_modify = can_modify_services(allow_actions_list)
 
-            # Check if the actions include any privileged actions or "*"
-            can_modify = can_modify_services(allow_actions_list)
+                role_info = {
+                    'AccountID': account_id,
+                    'AccountAlias': account_name,
+                    'RoleName': role_name,
+                    'Policies': ', '.join(policies),
+                    'PolicyCount': policy_count,
+                    'Conditions': conditions if conditions else "None",
+                    'DenyActions': "; ".join([f"{policy}[{', '.join(actions)}]" for policy, actions in deny_actions_list]),
+                    'Tags': tags,
+                    'PrivilegedActions': "; ".join(privileged_actions) if privileged_actions else "None",
+                    'CanModifyServices': can_modify
+                }
 
-            # Create basic role info (including whether it can modify services)
-            role_info = {
-                'RoleName': role_name,
-                'Policies': ', '.join(policies),  # Combined sorted policies
-                'PolicyCount': policy_count,
-                'Conditions': conditions if conditions else "None",  # Add conditions if available
-                'DenyActions': "; ".join([f"{policy}[{', '.join(actions)}]" for policy, actions in deny_actions_list]),  # Single column for deny actions
-                'Tags': tags,
-                'PrivilegedActions': "; ".join(privileged_actions) if privileged_actions else "None",  # Privileged actions formatted
-                'CanModifyServices': can_modify  # True if role can modify services
-            }
-
-            role_data.append(role_info)
+                role_data.append(role_info)
     
     return fieldnames, role_data

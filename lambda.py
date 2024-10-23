@@ -13,25 +13,22 @@ def jump_accounts(account_id, sts_client):
     )
     return response['Credentials']
 
-def assume_role(account_id, sts_client):
+def list_iam_roles_for_account(credentials, account_id):
     """
-    Uses jump_accounts to assume a role in the given account and returns an IAM client.
+    Lists IAM roles for the provided account using the given temporary credentials.
     """
-    credentials = jump_accounts(account_id, sts_client)
-    
-    # Return an IAM client with the temporary credentials
-    return boto3.client(
+    iam_client = boto3.client(
         'iam',
         aws_access_key_id=credentials['AccessKeyId'],
         aws_secret_access_key=credentials['SecretAccessKey'],
         aws_session_token=credentials['SessionToken']
     )
-
-def list_iam_roles(iam_client):
+    
     roles = []
     paginator = iam_client.get_paginator('list_roles')
     for response in paginator.paginate():
         roles.extend(response['Roles'])
+    
     return roles
 
 def get_combined_policies(iam_client, role_name):
@@ -143,22 +140,36 @@ def can_modify_services(actions):
                 return True
     return False
 
-def gather_iam_roles_from_all_accounts(account_aliases, only_privileged=True):
+def gather_iam_roles_from_all_accounts(only_privileged=True):
     """
     Gathers IAM roles from all accounts listed in account_aliases by assuming roles in those accounts.
     """
     sts_client = boto3.client('sts')  # Initialize STS client
+    account_alias = {
+        "111122223333": "AccountA",
+        "444455556666": "AccountB"
+    }  # Example account aliases
+
     fieldnames = ['AccountID', 'AccountAlias', 'RoleName', 'Policies', 'PolicyCount', 'Conditions', 'DenyActions', 'Tags', 'PrivilegedActions', 'CanModifyServices']
     role_data = []
 
-    for account_id, account_name in account_aliases.items():
+    for account_id, account_name in account_alias.items():
         print(f"Processing account {account_name} ({account_id})")
-        iam_client = assume_role(account_id, sts_client)  # Assume role in the target account
         
-        roles = list_iam_roles(iam_client)
+        # Assume role in the target account
+        credentials = jump_accounts(account_id, sts_client)
+        
+        # Get IAM roles for the account using temporary credentials
+        roles = list_iam_roles_for_account(credentials, account_id)
 
         for role in roles:
             role_name = role['RoleName']
+            iam_client = boto3.client(
+                'iam',
+                aws_access_key_id=credentials['AccessKeyId'],
+                aws_secret_access_key=credentials['SecretAccessKey'],
+                aws_session_token=credentials['SessionToken']
+            )
             is_privileged, tags = check_privileged_role(iam_client, role_name, only_privileged)
             
             if is_privileged:

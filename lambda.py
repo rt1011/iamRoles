@@ -1,7 +1,4 @@
 import boto3
-import csv
-import os
-from datetime import datetime
 
 # Constants: Privileged actions keywords that modify resources
 PRIVILEGED_ACTIONS_KEYWORDS = ["Create", "Update", "Modify", "Put", "Delete", "Write", "Attach", "Detach"]
@@ -70,11 +67,8 @@ def check_privileged_role(iam_client, role_name, only_privileged=True):
     tags = {tag['Key']: tag['Value'] for tag in tags_response.get('Tags', [])}
     
     if only_privileged and tags.get('Privileged') != 'Yes':  # Case-sensitive comparison
-        print(f"Skipping non-privileged role '{role_name}'")
         return False, tags
-    else:
-        print(f"Processing role: '{role_name}'")
-        return True, tags
+    return True, tags
 
 def is_privileged_action(action):
     """
@@ -95,7 +89,6 @@ def is_privileged_action(action):
         if action_name.lower().startswith(keyword.lower()):
             return True
     
-    # If it does not match "*", or privileged actions, return False
     return False
 
 def check_privileged_actions(iam_client, role_name):
@@ -158,9 +151,12 @@ def can_modify_services(actions):
                 return True
     return False
 
-def process_roles(iam_client, only_privileged=True):
+def gather_iam_roles_from_all_accounts(iam_client, only_privileged=True):
     roles = list_iam_roles(iam_client)
     role_data = []
+    
+    # Define fieldnames within the function
+    fieldnames = ['RoleName', 'Policies', 'PolicyCount', 'Conditions', 'DenyActions', 'Tags', 'PrivilegedActions', 'CanModifyServices']
     
     for role in roles:
         role_name = role['RoleName']
@@ -191,27 +187,4 @@ def process_roles(iam_client, only_privileged=True):
 
             role_data.append(role_info)
     
-    return role_data
-
-def write_to_csv(filename, fieldnames, data):
-    # Write output to CSV file
-    with open(filename, mode='w', newline='') as file:
-        writer = csv.DictWriter(file, fieldnames=fieldnames)
-        writer.writeheader()
-        for row in data:
-            writer.writerow(row)
-    print(f"CSV written: {filename}")
-
-if __name__ == "__main__":
-    # Running in CloudShell
-    session = boto3.Session()
-    iam_client = session.client('iam')
-    
-    fieldnames = ['RoleName', 'Policies', 'PolicyCount', 'Conditions', 'DenyActions', 'Tags', 'PrivilegedActions', 'CanModifyServices']
-    
-    # Process roles and check privileged actions
-    role_data = process_roles(iam_client, only_privileged=True)
-    
-    # Define filename with timestamp
-    filename = f"iam_roles_{datetime.now().strftime('%Y%m%d%H%M%S')}.csv"
-    write_to_csv(filename, fieldnames, role_data)
+    return fieldnames, role_data

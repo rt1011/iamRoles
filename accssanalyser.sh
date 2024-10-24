@@ -9,10 +9,23 @@ ACCOUNT_NAME=$(aws sts get-caller-identity --query 'Account' --output text)
 # Headers for the CSV file
 echo "AccountName,RoleName,Arn,AccessAnalyzerFinding" > $CSV_FILE
 
-echo "Processing account: $ACCOUNT_NAME"
+# Fetch the analyzer ARN (assuming there's only one analyzer in the account)
+ANALYZER_ARN=$(aws accessanalyzer list-analyzers --query 'analyzers[0].arn' --output text)
+
+if [ -z "$ANALYZER_ARN" ]; then
+  echo "No Access Analyzer found in the account."
+  exit 1
+fi
+
+echo "Using Analyzer ARN: $ANALYZER_ARN"
 
 # Get the list of IAM roles flagged by Access Analyzer
-ROLES=$(aws accessanalyzer list-findings --query 'findings[*].resource' --output text | grep arn:aws:iam)
+ROLES=$(aws accessanalyzer list-findings --analyzer-arn $ANALYZER_ARN --query 'findings[*].resource' --output text | grep arn:aws:iam)
+
+if [ -z "$ROLES" ]; then
+  echo "No IAM roles flagged by Access Analyzer."
+  exit 0
+fi
 
 # Loop through all roles flagged by Access Analyzer and append to CSV
 for ROLE_ARN in $ROLES; do

@@ -29,7 +29,7 @@ def list_iam_roles_for_account(credentials, account_id):
     for response in paginator.paginate():
         roles.extend(response['Roles'])
     
-    return roles
+    return roles, iam_client  # Return both the roles and the IAM client
 
 def get_combined_policies(iam_client, role_name):
     policies = []
@@ -160,16 +160,10 @@ def gather_iam_roles_from_all_accounts(only_privileged=True):
         credentials = jump_accounts(account_id, sts_client)
         
         # Get IAM roles for the account using temporary credentials
-        roles = list_iam_roles_for_account(credentials, account_id)
+        roles, iam_client = list_iam_roles_for_account(credentials, account_id)
 
         for role in roles:
             role_name = role['RoleName']
-            iam_client = boto3.client(
-                'iam',
-                aws_access_key_id=credentials['AccessKeyId'],
-                aws_secret_access_key=credentials['SecretAccessKey'],
-                aws_session_token=credentials['SessionToken']
-            )
             is_privileged, tags = check_privileged_role(iam_client, role_name, only_privileged)
             
             if is_privileged:

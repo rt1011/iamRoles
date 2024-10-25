@@ -140,12 +140,13 @@ def can_modify_services(actions):
                 return True
     return False
 
+
 def gather_iam_roles_from_all_accounts(only_privileged=True):
     """
     Gathers IAM roles from all accounts listed in account_aliases by assuming roles in those accounts.
     """
     sts_client = boto3.client('sts')  # Initialize STS client
-    account_alias = {
+    account_aliases = {
         "111122223333": "AccountA",
         "444455556666": "AccountB"
     }  # Example account aliases
@@ -153,11 +154,12 @@ def gather_iam_roles_from_all_accounts(only_privileged=True):
     fieldnames = ['AccountID', 'AccountAlias', 'RoleName', 'Policies', 'PolicyCount', 'Conditions', 'DenyActions', 'Tags', 'PrivilegedActions', 'CanModifyServices']
     role_data = []
 
-    for account_id, account_name in account_alias.items():
+    for account_id, account_name in account_aliases.items():
         print(f"Processing account {account_name} ({account_id})")
         
         # Assume role in the target account
-        credentials = jump_accounts(account_id, sts_client)
+        out = jump_accounts(account_id,sts_client) # use jump_accounts to assume role
+        credentials = out['Credentials'] #extract credentails from output
         
         # Get IAM roles for the account using temporary credentials
         roles, iam_client = list_iam_roles_for_account(credentials, account_id)
@@ -174,6 +176,10 @@ def gather_iam_roles_from_all_accounts(only_privileged=True):
                 privileged_actions = extract_privileged_actions(allow_actions_list)
                 can_modify = can_modify_services(allow_actions_list)
 
+               
+                denies =      "||| ".join([f"{policy}[{'| '.join(actions)}]" for policy, actions in deny_actions_list])
+                priv = "| ".join(privileged_actions) if privileged_actions else "None"
+
                 role_info = {
                     'AccountID': account_id,
                     'AccountAlias': account_name,
@@ -181,9 +187,9 @@ def gather_iam_roles_from_all_accounts(only_privileged=True):
                     'Policies': ', '.join(policies),
                     'PolicyCount': policy_count,
                     'Conditions': conditions if conditions else "None",
-                    'DenyActions': "; ".join([f"{policy}[{', '.join(actions)}]" for policy, actions in deny_actions_list]),
+                    'DenyActions': denies,
                     'Tags': tags,
-                    'PrivilegedActions': "; ".join(privileged_actions) if privileged_actions else "None",
+                    'PrivilegedActions': priv,
                     'CanModifyServices': can_modify
                 }
 

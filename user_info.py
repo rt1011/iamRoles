@@ -42,7 +42,7 @@ def get_policy_conditions_and_denies(iam_client, user_name):
         for statement in policy_document.get('Statement', []):
             if 'Condition' in statement:
                 conditions.append(statement['Condition'])
-            if statement.get('Effect'] == 'Deny':
+            if statement.get('Effect') == 'Deny':
                 deny_actions.extend(statement.get('Action', []))
     return conditions, deny_actions
 
@@ -56,9 +56,9 @@ def check_privileged_actions(iam_client, user_name):
             actions = statement.get('Action', [])
             if isinstance(actions, str):
                 actions = [actions]
-            if statement.get('Effect'] == 'Allow':
+            if statement.get('Effect') == 'Allow':
                 allow_actions.append((policy_name, actions))
-            elif statement.get('Effect'] == 'Deny':
+            elif statement.get('Effect') == 'Deny':
                 deny_actions.append((policy_name, actions))
     managed_policies = iam_client.list_attached_user_policies(UserName=user_name)['AttachedPolicies']
     for policy in managed_policies:
@@ -69,9 +69,9 @@ def check_privileged_actions(iam_client, user_name):
             actions = statement.get('Action', [])
             if isinstance(actions, str):
                 actions = [actions]
-            if statement.get('Effect'] == 'Allow':
+            if statement.get('Effect') == 'Allow':
                 allow_actions.append((policy['PolicyName'], actions))
-            elif statement.get('Effect'] == 'Deny':
+            elif statement.get('Effect') == 'Deny':
                 deny_actions.append((policy['PolicyName'], actions))
     return allow_actions, deny_actions
 

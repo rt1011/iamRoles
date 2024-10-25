@@ -2,6 +2,7 @@ import boto3
 import csv
 from datetime import datetime
 import argparse
+from botocore.exceptions import ClientError
 
 # Constants: Privileged actions keywords that modify resources
 PRIVILEGED_ACTIONS_KEYWORDS = ["Create", "Update", "Modify", "Put", "Delete", "Write", "Attach", "Detach"]
@@ -66,26 +67,37 @@ def check_privileged_actions(iam_client, policies, entity_type, entity_name):
     for policy in policies:
         policy_name = policy.split(":")[1] if ":" in policy else policy
 
-        if "inline" in policy:
-            if entity_type == "user":
-                policy_document = iam_client.get_user_policy(UserName=entity_name, PolicyName=policy_name)['PolicyDocument']
-            elif entity_type == "group":
-                policy_document = iam_client.get_group_policy(GroupName=entity_name, PolicyName=policy_name)['PolicyDocument']
-        elif "managed" in policy:
-            policy_arn = iam_client.get_policy(PolicyArn=policy_name)['Policy']['Arn']
-            policy_version = iam_client.get_policy(PolicyArn=policy_arn)['Policy']['DefaultVersionId']
-            policy_document = iam_client.get_policy_version(PolicyArn=policy_arn, VersionId=policy_version)['PolicyVersion']['Document']
-        else:
-            continue
+        try:
+            # Inline policies
+            if "inline" in policy:
+                if entity_type == "user":
+                    policy_document = iam_client.get_user_policy(UserName=entity_name, PolicyName=policy_name)['PolicyDocument']
+                elif entity_type == "group":
+                    policy_document = iam_client.get_group_policy(GroupName=entity_name, PolicyName=policy_name)['PolicyDocument']
 
-        for statement in policy_document.get('Statement', []):
-            actions = statement.get('Action', [])
-            if isinstance(actions, str):
-                actions = [actions]
-            if statement.get('Effect') == 'Allow':
-                allow_actions.extend(actions)
-            elif statement.get('Effect') == 'Deny':
-                deny_actions.extend(actions)
+            # Managed policies
+            elif "managed" in policy:
+                policy_arn = iam_client.get_policy(PolicyArn=policy_name)['Policy']['Arn']
+                policy_version = iam_client.get_policy(PolicyArn=policy_arn)['Policy']['DefaultVersionId']
+                policy_document = iam_client.get_policy_version(PolicyArn=policy_arn, VersionId=policy_version)['PolicyVersion']['Document']
+            else:
+                continue
+
+            for statement in policy_document.get('Statement', []):
+                actions = statement.get('Action', [])
+                if isinstance(actions, str):
+                    actions = [actions]
+                if statement.get('Effect') == 'Allow':
+                    allow_actions.extend(actions)
+                elif statement.get('Effect') == 'Deny':
+                    deny_actions.extend(actions)
+
+        except ClientError as e:
+            if e.response['Error']['Code'] == 'NoSuchEntity':
+                print(f"Warning: {policy_name} for {entity_type} '{entity_name}' does not exist.")
+                continue
+            else:
+                raise e  # Raise if it's a different exception
 
     return allow_actions, deny_actions
 

@@ -26,14 +26,14 @@ def list_iam_groups(iam_client):
 def get_combined_policies_for_user(iam_client, user_name):
     policies = []
 
-    # User's own policies
+    # User's inline and managed policies
     inline_policies = iam_client.list_user_policies(UserName=user_name)['PolicyNames']
     policies.extend([f"user-inline:{p}" for p in inline_policies])
 
     managed_policies = iam_client.list_attached_user_policies(UserName=user_name)['AttachedPolicies']
-    policies.extend([f"user-managed:{p['PolicyName']}" for p in managed_policies])
+    policies.extend([f"user-managed:{p['PolicyArn']}" for p in managed_policies])
 
-    # Group policies
+    # Group policies for the user
     groups = iam_client.list_groups_for_user(UserName=user_name)['Groups']
     for group in groups:
         group_name = group['GroupName']
@@ -43,7 +43,7 @@ def get_combined_policies_for_user(iam_client, user_name):
         policies.extend([f"{group_name}-inline:{p}" for p in group_inline_policies])
 
         group_managed_policies = iam_client.list_attached_group_policies(GroupName=group_name)['AttachedPolicies']
-        policies.extend([f"{group_name}-managed:{p['PolicyName']}" for p in group_managed_policies])
+        policies.extend([f"{group_name}-managed:{p['PolicyArn']}" for p in group_managed_policies])
 
     return sorted(policies)
 
@@ -56,28 +56,41 @@ def get_combined_policies_for_group(iam_client, group_name):
 
     # Managed policies attached to the group
     group_managed_policies = iam_client.list_attached_group_policies(GroupName=group_name)['AttachedPolicies']
-    policies.extend([f"group-managed:{p['PolicyName']}" for p in group_managed_policies])
+    policies.extend([f"group-managed:{p['PolicyArn']}" for p in group_managed_policies])
 
     return sorted(policies)
+
+def is_privileged_action(action):
+    """
+    Check if an action is privileged based on defined keywords.
+    """
+    action_name = action.split(":")[-1]
+    if action_name == "*":
+        return True
+    return any(action_name.lower().startswith(keyword.lower()) for keyword in PRIVILEGED_ACTIONS_KEYWORDS)
+
+def filter_privileged_actions(actions):
+    """
+    Filters a list of actions to only include privileged actions.
+    """
+    return [action for action in actions if is_privileged_action(action)]
 
 def check_privileged_actions(iam_client, policies, entity_type, entity_name):
     allow_actions = []
     deny_actions = []
 
     for policy in policies:
-        policy_name = policy.split(":")[1] if ":" in policy else policy
-
         try:
             # Inline policies
             if "inline" in policy:
+                policy_name = policy.split(":")[1]
                 if entity_type == "user":
                     policy_document = iam_client.get_user_policy(UserName=entity_name, PolicyName=policy_name)['PolicyDocument']
                 elif entity_type == "group":
                     policy_document = iam_client.get_group_policy(GroupName=entity_name, PolicyName=policy_name)['PolicyDocument']
-
             # Managed policies
             elif "managed" in policy:
-                policy_arn = iam_client.get_policy(PolicyArn=policy_name)['Policy']['Arn']
+                policy_arn = policy.split(":")[1]
                 policy_version = iam_client.get_policy(PolicyArn=policy_arn)['Policy']['DefaultVersionId']
                 policy_document = iam_client.get_policy_version(PolicyArn=policy_arn, VersionId=policy_version)['PolicyVersion']['Document']
             else:
@@ -88,13 +101,13 @@ def check_privileged_actions(iam_client, policies, entity_type, entity_name):
                 if isinstance(actions, str):
                     actions = [actions]
                 if statement.get('Effect') == 'Allow':
-                    allow_actions.extend(actions)
+                    allow_actions.extend(filter_privileged_actions(actions))
                 elif statement.get('Effect') == 'Deny':
-                    deny_actions.extend(actions)
+                    deny_actions.extend(filter_privileged_actions(actions))
 
         except ClientError as e:
             if e.response['Error']['Code'] == 'NoSuchEntity':
-                print(f"Warning: {policy_name} for {entity_type} '{entity_name}' does not exist.")
+                print(f"Warning: {policy} for {entity_type} '{entity_name}' does not exist.")
                 continue
             else:
                 raise e  # Raise if it's a different exception

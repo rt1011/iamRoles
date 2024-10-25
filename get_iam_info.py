@@ -15,18 +15,10 @@ def list_iam_users(iam_client):
     print(f"Total IAM Users found: {len(users)}")
     return users
 
-def list_iam_groups(iam_client):
-    groups = []
-    paginator = iam_client.get_paginator('list_groups')
-    for response in paginator.paginate():
-        groups.extend(response['Groups'])
-    print(f"Total IAM Groups found: {len(groups)}")
-    return groups
-
 def get_combined_policies_for_user(iam_client, user_name):
     policies = []
 
-    # User's inline and managed policies
+    # User's own policies
     inline_policies = iam_client.list_user_policies(UserName=user_name)['PolicyNames']
     policies.extend([f"user-inline:{p}" for p in inline_policies])
 
@@ -47,19 +39,6 @@ def get_combined_policies_for_user(iam_client, user_name):
 
     return sorted(policies)
 
-def get_combined_policies_for_group(iam_client, group_name):
-    policies = []
-
-    # Inline policies attached to the group
-    group_inline_policies = iam_client.list_group_policies(GroupName=group_name)['PolicyNames']
-    policies.extend([f"group-inline:{p}" for p in group_inline_policies])
-
-    # Managed policies attached to the group
-    group_managed_policies = iam_client.list_attached_group_policies(GroupName=group_name)['AttachedPolicies']
-    policies.extend([f"group-managed:{p['PolicyArn']}" for p in group_managed_policies])
-
-    return sorted(policies)
-
 def is_privileged_action(action):
     """
     Check if an action is privileged based on defined keywords.
@@ -75,20 +54,21 @@ def filter_privileged_actions(actions):
     """
     return [action for action in actions if is_privileged_action(action)]
 
-def check_privileged_actions(iam_client, policies, entity_type, entity_name):
+def check_privileged_actions(iam_client, policies, user_name):
     allow_actions = []
     deny_actions = []
 
     for policy in policies:
         try:
-            # Inline policies
+            # Check if policy is inline or managed
             if "inline" in policy:
                 policy_name = policy.split(":")[1]
-                if entity_type == "user":
-                    policy_document = iam_client.get_user_policy(UserName=entity_name, PolicyName=policy_name)['PolicyDocument']
-                elif entity_type == "group":
-                    policy_document = iam_client.get_group_policy(GroupName=entity_name, PolicyName=policy_name)['PolicyDocument']
-            # Managed policies
+                if "user-inline" in policy:
+                    policy_document = iam_client.get_user_policy(UserName=user_name, PolicyName=policy_name)['PolicyDocument']
+                else:
+                    # Group inline policy
+                    group_name = policy.split("-inline:")[0]
+                    policy_document = iam_client.get_group_policy(GroupName=group_name, PolicyName=policy_name)['PolicyDocument']
             elif "managed" in policy:
                 policy_arn = policy.split(":")[1]
                 policy_version = iam_client.get_policy(PolicyArn=policy_arn)['Policy']['DefaultVersionId']
@@ -107,62 +87,58 @@ def check_privileged_actions(iam_client, policies, entity_type, entity_name):
 
         except ClientError as e:
             if e.response['Error']['Code'] == 'NoSuchEntity':
-                print(f"Warning: {policy} for {entity_type} '{entity_name}' does not exist.")
+                print(f"Warning: {policy} for user '{user_name}' does not exist.")
                 continue
             else:
                 raise e  # Raise if it's a different exception
 
     return allow_actions, deny_actions
 
-def gather_entity_data(entity_type):
+def gather_user_data():
     iam_client = boto3.client('iam')
-    entity_data = []
+    user_data = []
 
-    if entity_type == "user":
-        entities = list_iam_users(iam_client)
-    else:
-        entities = list_iam_groups(iam_client)
+    users = list_iam_users(iam_client)
 
-    for entity in entities:
-        entity_name = entity['UserName'] if entity_type == "user" else entity['GroupName']
-        print(f"\nProcessing {entity_type.capitalize()}: {entity_name}")
+    for user in users:
+        user_name = user['UserName']
+        print(f"\nProcessing User: {user_name}")
 
-        # Gather policies for each entity
-        policies = get_combined_policies_for_user(iam_client, entity_name) if entity_type == "user" else get_combined_policies_for_group(iam_client, entity_name)
-        allow_actions, deny_actions = check_privileged_actions(iam_client, policies, entity_type, entity_name)
+        # Gather policies for each user, including those attached via groups
+        policies = get_combined_policies_for_user(iam_client, user_name)
+        allow_actions, deny_actions = check_privileged_actions(iam_client, policies, user_name)
 
         # Format output
-        entity_info = {
-            'EntityName': entity_name,
+        user_info = {
+            'UserName': user_name,
             'Policies': ", ".join(policies),
             'AllowActions': ", ".join(allow_actions),
             'DenyActions': ", ".join(deny_actions),
         }
 
-        entity_data.append(entity_info)
+        user_data.append(user_info)
 
-    return entity_data
+    return user_data
 
-def write_to_csv(entity_data, entity_type, filename="iam_report"):
+def write_to_csv(user_data, filename="iam_user_report"):
     """
-    Writes the entity data to a CSV file with the given filename.
+    Writes the user data to a CSV file with the given filename.
     """
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-    file_path = f"/tmp/{filename}_{entity_type}_{timestamp}.csv"
-    fieldnames = ['EntityName', 'Policies', 'AllowActions', 'DenyActions']
+    file_path = f"/tmp/{filename}_{timestamp}.csv"
+    fieldnames = ['UserName', 'Policies', 'AllowActions', 'DenyActions']
     
     with open(file_path, mode='w', newline='') as file:
         writer = csv.DictWriter(file, fieldnames=fieldnames)
         writer.writeheader()
-        writer.writerows(entity_data)
+        writer.writerows(user_data)
     
     print(f"Report generated at: {file_path}")
 
 # Run the script
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Fetch IAM entity information.")
-    parser.add_argument("mode", choices=["user", "group"], default="user", nargs="?", help="Mode to fetch data for IAM users or groups.")
+    parser = argparse.ArgumentParser(description="Fetch IAM user information.")
     args = parser.parse_args()
 
-    entity_data = gather_entity_data(args.mode)
-    write_to_csv(entity_data, args.mode)
+    user_data = gather_user_data()
+    write_to_csv(user_data)

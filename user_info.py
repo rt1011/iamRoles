@@ -15,18 +15,36 @@ def list_iam_users():
 
 def get_combined_policies(iam_client, user_name):
     policies = []
-    inline_policies = iam_client.list_user_policies(UserName=user_name)['PolicyNames']
-    managed_policies = iam_client.list_attached_user_policies(UserName=user_name)['AttachedPolicies']
+    
+    # Inline policies
+    inline_policies = []
+    inline_paginator = iam_client.get_paginator('list_user_policies')
+    for inline_response in inline_paginator.paginate(UserName=user_name):
+        inline_policies.extend(inline_response['PolicyNames'])
+    
+    # Managed policies
+    managed_policies = []
+    managed_paginator = iam_client.get_paginator('list_attached_user_policies')
+    for managed_response in managed_paginator.paginate(UserName=user_name):
+        managed_policies.extend(managed_response['AttachedPolicies'])
+    
+    # Combine and sort policies
     policies.extend(inline_policies)
     policies.extend([policy['PolicyName'] for policy in managed_policies])
     policy_count = len(policies)
     sorted_policies = sorted(policies, key=lambda s: s.lower())
+    
     return sorted_policies, policy_count
 
 def get_policy_conditions_and_denies(iam_client, user_name):
     conditions = []
     deny_actions = []
-    inline_policies = iam_client.list_user_policies(UserName=user_name)['PolicyNames']
+    
+    # Inline policies
+    inline_policies = []
+    inline_paginator = iam_client.get_paginator('list_user_policies')
+    for inline_response in inline_paginator.paginate(UserName=user_name):
+        inline_policies.extend(inline_response['PolicyNames'])
     for policy_name in inline_policies:
         policy_document = iam_client.get_user_policy(UserName=user_name, PolicyName=policy_name)['PolicyDocument']
         for statement in policy_document.get('Statement', []):
@@ -34,7 +52,12 @@ def get_policy_conditions_and_denies(iam_client, user_name):
                 conditions.append(statement['Condition'])
             if statement.get('Effect') == 'Deny':
                 deny_actions.extend(statement.get('Action', []))
-    managed_policies = iam_client.list_attached_user_policies(UserName=user_name)['AttachedPolicies']
+    
+    # Managed policies
+    managed_policies = []
+    managed_paginator = iam_client.get_paginator('list_attached_user_policies')
+    for managed_response in managed_paginator.paginate(UserName=user_name):
+        managed_policies.extend(managed_response['AttachedPolicies'])
     for policy in managed_policies:
         policy_arn = policy['PolicyArn']
         policy_version = iam_client.get_policy(PolicyArn=policy_arn)['Policy']['DefaultVersionId']
@@ -44,12 +67,18 @@ def get_policy_conditions_and_denies(iam_client, user_name):
                 conditions.append(statement['Condition'])
             if statement.get('Effect') == 'Deny':
                 deny_actions.extend(statement.get('Action', []))
+    
     return conditions, deny_actions
 
 def check_privileged_actions(iam_client, user_name):
     allow_actions = []
     deny_actions = []
-    inline_policies = iam_client.list_user_policies(UserName=user_name)['PolicyNames']
+    
+    # Inline policies
+    inline_policies = []
+    inline_paginator = iam_client.get_paginator('list_user_policies')
+    for inline_response in inline_paginator.paginate(UserName=user_name):
+        inline_policies.extend(inline_response['PolicyNames'])
     for policy_name in inline_policies:
         policy_document = iam_client.get_user_policy(UserName=user_name, PolicyName=policy_name)['PolicyDocument']
         for statement in policy_document.get('Statement', []):
@@ -60,7 +89,12 @@ def check_privileged_actions(iam_client, user_name):
                 allow_actions.append((policy_name, actions))
             elif statement.get('Effect') == 'Deny':
                 deny_actions.append((policy_name, actions))
-    managed_policies = iam_client.list_attached_user_policies(UserName=user_name)['AttachedPolicies']
+
+    # Managed policies
+    managed_policies = []
+    managed_paginator = iam_client.get_paginator('list_attached_user_policies')
+    for managed_response in managed_paginator.paginate(UserName=user_name):
+        managed_policies.extend(managed_response['AttachedPolicies'])
     for policy in managed_policies:
         policy_arn = policy['PolicyArn']
         policy_version = iam_client.get_policy(PolicyArn=policy_arn)['Policy']['DefaultVersionId']
@@ -73,6 +107,7 @@ def check_privileged_actions(iam_client, user_name):
                 allow_actions.append((policy['PolicyName'], actions))
             elif statement.get('Effect') == 'Deny':
                 deny_actions.append((policy['PolicyName'], actions))
+
     return allow_actions, deny_actions
 
 def extract_privileged_actions(allow_actions):

@@ -11,6 +11,7 @@ def list_iam_users():
     paginator = iam_client.get_paginator('list_users')
     for response in paginator.paginate():
         users.extend(response['Users'])
+    print(f"Total IAM Users found: {len(users)}")
     return users, iam_client
 
 def get_combined_policies(iam_client, user_name):
@@ -28,13 +29,12 @@ def get_combined_policies(iam_client, user_name):
     for managed_response in managed_paginator.paginate(UserName=user_name):
         managed_policies.extend(managed_response['AttachedPolicies'])
     
-    # Combine and sort policies
     policies.extend(inline_policies)
     policies.extend([policy['PolicyName'] for policy in managed_policies])
     policy_count = len(policies)
-    sorted_policies = sorted(policies, key=lambda s: s.lower())
     
-    return sorted_policies, policy_count
+    print(f"User: {user_name}, Inline Policies: {inline_policies}, Managed Policies: {[policy['PolicyName'] for policy in managed_policies]}")
+    return sorted(policies, key=lambda s: s.lower()), policy_count
 
 def get_policy_conditions_and_denies(iam_client, user_name):
     conditions = []
@@ -68,6 +68,7 @@ def get_policy_conditions_and_denies(iam_client, user_name):
             if statement.get('Effect') == 'Deny':
                 deny_actions.extend(statement.get('Action', []))
     
+    print(f"User: {user_name}, Conditions: {conditions}, Deny Actions: {deny_actions}")
     return conditions, deny_actions
 
 def check_privileged_actions(iam_client, user_name):
@@ -108,6 +109,7 @@ def check_privileged_actions(iam_client, user_name):
             elif statement.get('Effect') == 'Deny':
                 deny_actions.append((policy['PolicyName'], actions))
 
+    print(f"User: {user_name}, Allow Actions: {allow_actions}, Deny Actions: {deny_actions}")
     return allow_actions, deny_actions
 
 def extract_privileged_actions(allow_actions):
@@ -140,6 +142,7 @@ def gather_iam_users():
     users, iam_client = list_iam_users()
     for user in users:
         user_name = user['UserName']
+        print(f"\nProcessing User: {user_name}")
         policies, policy_count = get_combined_policies(iam_client, user_name)
         conditions, deny_actions = get_policy_conditions_and_denies(iam_client, user_name)
         allow_actions_list, deny_actions_list = check_privileged_actions(iam_client, user_name)

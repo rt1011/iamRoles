@@ -1,6 +1,7 @@
 import http.client
 import json
 import base64
+import csv
 
 # Artifactory details and credentials
 artifactory_host = 'your-artifactory-instance'
@@ -34,7 +35,7 @@ def get_artifact_count(repo_key):
     data = make_request(artifact_count_url)
     return len(data.get('results', [])) if data else 0
 
-# Main function to gather information and output it
+# Main function to gather information and write to CSV
 def main():
     repositories = get_repositories()
     
@@ -42,20 +43,29 @@ def main():
         repo_info = []
         for repo in repositories:
             repo_key = repo.get('key')
-            repo_type = repo.get('type')
-            repo_repo_url = f"https://{artifactory_host}/artifactory/{repo_key}"
+            repo_type = repo.get('type')  # Repository type: local, remote, virtual
+            package_type = repo.get('packageType')  # Package type: maven, npm, python, etc.
+            repo_url = f"https://{artifactory_host}/artifactory/{repo_key}"
             artifact_count = get_artifact_count(repo_key)
 
             repo_info.append({
                 'Name': repo_key,
-                'Type': repo_type,
-                'URL': repo_repo_url,
+                'Repository Type': repo_type,
+                'Package Type': package_type,
+                'URL': repo_url,
                 'Artifact Count': artifact_count
             })
 
-        # Print each repository's information
-        for info in repo_info:
-            print(f"Name: {info['Name']}, Type: {info['Type']}, URL: {info['URL']}, Artifact Count: {info['Artifact Count']}")
+        # Write the collected information to a CSV file
+        csv_file = "artifactory_repositories.csv"
+        fieldnames = ['Name', 'Repository Type', 'Package Type', 'URL', 'Artifact Count']
+        
+        with open(csv_file, mode='w', newline='') as file:
+            writer = csv.DictWriter(file, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(repo_info)
+        
+        print(f"Repository information has been written to {csv_file}")
     else:
         print("Failed to retrieve repositories.")
 

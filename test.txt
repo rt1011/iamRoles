@@ -1,0 +1,23 @@
+Subject: Update on Application ID Management and SharePoint Tracking for DA Applications
+
+Hello [Team/Relevant Stakeholders],
+
+I wanted to provide an update on our approach to managing application IDs within the [Designated Area, DA].
+
+Moving forward, we will be gathering key application information in a SharePoint list to capture essential details for each application, including:
+
+- Application ID
+- Application Name
+- Owner
+- Owner’s Manager
+
+This SharePoint list will act as our centralized reference, simplifying our tracking process and allowing for regular updates during Business Reviews (BRs). This approach is tailored for the low-risk, non-GxP scientific workflows covered by the disease areas and will enable us to maintain organized and current information.
+
+Initially, we considered an umbrella ID for each DA, which would allow multiple applications within a DA to share a single application ID if they don’t already have one. However, we recognized that this approach might inadvertently increase the DA head's responsibility, potentially causing them to receive multiple vulnerability notifications—something we want to avoid.
+
+We are still exploring the umbrella ID option, given the current corporate standard has proven onerous for low-risk workflows. That said, all formal RX products will continue to adhere strictly to the corporate standards for application ID management.
+
+Thank you for your attention, and please feel free to reach out if you have any questions regarding this update.
+
+Best regards,  
+[Your Name]

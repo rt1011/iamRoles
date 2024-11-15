@@ -1,23 +1,21 @@
 import http.client
 import json
 import csv
-from cryptography.fernet import Fernet
+import base64
 
 # Configuration
 ARTIFACTORY_URL = "your-artifactory-domain.com"
 USERNAME = "your-username"
-ENCRYPTED_PASSWORD = b"your-encrypted-password"  # Encrypted password bytes
-FERNET_KEY = b"your-fernet-key"  # Fernet key for decryption
+ENCRYPTED_PASSWORD = "your-base64-encoded-password"  # Base64-encoded password
 
-# Decrypt password
-cipher_suite = Fernet(FERNET_KEY)
-password = cipher_suite.decrypt(ENCRYPTED_PASSWORD).decode("utf-8")
+# Decode password
+password = base64.b64decode(ENCRYPTED_PASSWORD).decode("utf-8")
 
 # Function to get repository details
 def get_repositories():
     conn = http.client.HTTPSConnection(ARTIFACTORY_URL)
     headers = {
-        "Authorization": f"Basic {USERNAME}:{password}".encode("base64").decode("utf-8").strip()
+        "Authorization": f"Basic {base64.b64encode(f'{USERNAME}:{password}'.encode()).decode()}"
     }
     
     conn.request("GET", "/artifactory/api/repositories", headers=headers)
@@ -34,7 +32,7 @@ def get_repositories():
 def get_artifact_count(repo_key):
     conn = http.client.HTTPSConnection(ARTIFACTORY_URL)
     headers = {
-        "Authorization": f"Basic {USERNAME}:{password}".encode("base64").decode("utf-8").strip()
+        "Authorization": f"Basic {base64.b64encode(f'{USERNAME}:{password}'.encode()).decode()}"
     }
     
     conn.request("GET", f"/artifactory/api/storage/{repo_key}?list&deep=1", headers=headers)

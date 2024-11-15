@@ -9,8 +9,17 @@ artifactory_url = f'/artifactory/api/repositories'
 username = 'your-username'
 encrypted_password = 'your-encrypted-password'
 
-# Decrypt the password (this example uses base64 for simplicity; replace with actual decryption if needed)
-password = base64.b64decode(encrypted_password).decode('utf-8')
+# Function to add Base64 padding if necessary
+def add_base64_padding(encoded_string):
+    return encoded_string + '=' * (-len(encoded_string) % 4)
+
+# Decrypt the password (fix padding issue if necessary)
+try:
+    encrypted_password = add_base64_padding(encrypted_password)
+    password = base64.b64decode(encrypted_password).decode('utf-8')
+except Exception as e:
+    print(f"Failed to decode password: {e}")
+    exit(1)
 
 # Helper function to make requests
 def make_request(url):

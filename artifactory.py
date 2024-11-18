@@ -2,6 +2,7 @@ import http.client
 import json
 import base64
 import csv
+import sys
 
 # Artifactory details
 ARTIFACTORY_URL = "your.artifactory.instance"  # Replace with your Artifactory URL (e.g., artifactory.example.com)
@@ -52,16 +53,20 @@ def count_folders(repo_key, path=""):
 def fetch_repo_details():
     repo_details = []
     repos = get_repositories()
-    for repo in repos:
+    for idx, repo in enumerate(repos, 1):
         repo_key = repo['key']
         repo_type = repo['type']
         repo_url = repo.get('url', '')
         repo_kind = repo.get('packageType', 'unknown')
 
+        # Print status update
+        sys.stdout.write(f"\rProcessing repo {idx}/{len(repos)}: {repo_key}...")
+        sys.stdout.flush()
+
         try:
             folder_count = count_folders(repo_key)
         except Exception as e:
-            print(f"Failed to count folders for {repo_key}: {e}")
+            print(f"\nFailed to count folders for {repo_key}: {e}")
             folder_count = "N/A"
 
         repo_details.append({
@@ -71,6 +76,8 @@ def fetch_repo_details():
             "Kind": repo_kind,
             "Number of Artifacts (Folders)": folder_count
         })
+
+    print("\nProcessing complete.")
     return repo_details
 
 # Write details to CSV

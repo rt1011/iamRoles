@@ -29,13 +29,24 @@ def get_repositories():
     repos = make_request("GET", "/artifactory/api/repositories", headers=auth_header)
     return repos
 
-# Get repository size and number of artifacts
-def get_repo_storage_info(repo_key):
+# Recursively count folders in a repository
+def count_folders(repo_key, path=""):
     auth_header = {
         "Authorization": f"Basic {base64.b64encode(f'{ARTIFACTORY_USER}:{ENCRYPTED_PASSWORD}'.encode()).decode()}"
     }
-    storage_info = make_request("GET", f"/artifactory/api/storage/{repo_key}", headers=auth_header)
-    return storage_info
+    endpoint = f"/artifactory/api/storage/{repo_key}/{path}"
+    try:
+        data = make_request("GET", endpoint, headers=auth_header)
+        folder_count = 0
+        if "children" in data:
+            for child in data["children"]:
+                if child["folder"]:  # If it's a folder
+                    folder_count += 1
+                    folder_count += count_folders(repo_key, path + "/" + child["uri"].lstrip("/"))
+        return folder_count
+    except Exception as e:
+        print(f"Failed to traverse path {path} in {repo_key}: {e}")
+        return 0
 
 # Fetch repository details
 def fetch_repo_details():
@@ -48,27 +59,23 @@ def fetch_repo_details():
         repo_kind = repo.get('packageType', 'unknown')
 
         try:
-            storage_info = get_repo_storage_info(repo_key)
-            repo_size = storage_info.get('storageSummary', {}).get('totalSize', '0')
-            num_artifacts = storage_info.get('storageSummary', {}).get('totalArtifacts', 0)
+            folder_count = count_folders(repo_key)
         except Exception as e:
-            print(f"Failed to fetch storage info for {repo_key}: {e}")
-            repo_size = "N/A"
-            num_artifacts = "N/A"
+            print(f"Failed to count folders for {repo_key}: {e}")
+            folder_count = "N/A"
 
         repo_details.append({
             "Name": repo_key,
             "Type": repo_type,
             "URL": repo_url,
             "Kind": repo_kind,
-            "Size": repo_size,
-            "Number of Artifacts": num_artifacts
+            "Number of Artifacts (Folders)": folder_count
         })
     return repo_details
 
 # Write details to CSV
 def write_to_csv(repo_details, filename="artifactory_repos.csv"):
-    fieldnames = ["Name", "Type", "URL", "Kind", "Size", "Number of Artifacts"]
+    fieldnames = ["Name", "Type", "URL", "Kind", "Number of Artifacts (Folders)"]
     with open(filename, mode='w', newline='') as file:
         writer = csv.DictWriter(file, fieldnames=fieldnames)
         writer.writeheader()

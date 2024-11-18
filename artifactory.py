@@ -37,7 +37,7 @@ def get_repo_details(repo_key):
     endpoint = f"/artifactory/api/storage/{repo_key}"
     try:
         data = make_request("GET", endpoint, headers=auth_header)
-        artifact_count = data.get("filesCount", 0)
+        artifact_count = data.get("filesCount", 0)  # Use "children" to count manually if needed
         repo_size = data.get("repoSize", 0)
         created = data.get("created", "N/A")
         return artifact_count, repo_size, created

@@ -29,21 +29,29 @@ def get_repositories():
     repos = make_request("GET", "/artifactory/api/repositories", headers=auth_header)
     return repos
 
-# Get repository general details
-def get_repo_details(repo_key):
+# Recursively traverse repository to calculate size and count folders
+def traverse_repo(repo_key, path=""):
     auth_header = {
         "Authorization": f"Basic {base64.b64encode(f'{ARTIFACTORY_USER}:{ENCRYPTED_PASSWORD}'.encode()).decode()}"
     }
-    endpoint = f"/artifactory/api/storage/{repo_key}"
+    endpoint = f"/artifactory/api/storage/{repo_key}/{path}"
     try:
         data = make_request("GET", endpoint, headers=auth_header)
-        artifact_count = data.get("filesCount", 0)  # Use "children" to count manually if needed
-        repo_size = data.get("repoSize", 0)
-        created = data.get("created", "N/A")
-        return artifact_count, repo_size, created
+        total_size = data.get("size", 0)
+        folder_count = 0
+
+        # If there are children, traverse them
+        if "children" in data:
+            for child in data["children"]:
+                if child["folder"]:
+                    folder_count += 1
+                    child_size, child_folders = traverse_repo(repo_key, f"{path}/{child['uri'].lstrip('/')}")
+                    total_size += child_size
+                    folder_count += child_folders
+        return total_size, folder_count
     except Exception as e:
-        print(f"Failed to fetch details for {repo_key}: {e}")
-        return "N/A", "N/A", "N/A"
+        print(f"Failed to traverse path {path} in {repo_key}: {e}")
+        return 0, 0
 
 # Fetch repository details
 def fetch_repo_details():
@@ -56,16 +64,19 @@ def fetch_repo_details():
         package_type = repo.get('packageType', 'N/A')
 
         print(f"Processing repository {idx}/{len(repos)}: {repo_key}...")
-        artifact_count, repo_size, created = get_repo_details(repo_key)
+        try:
+            total_size, folder_count = traverse_repo(repo_key)
+        except Exception as e:
+            print(f"Failed to traverse {repo_key}: {e}")
+            total_size, folder_count = "N/A", "N/A"
 
         repo_details.append({
             "Name": repo_key,
             "Package Type": package_type,
             "Repository Path": f"{repo_key}/",
             "Repository Layout": repo_layout,
-            "Created": created,
-            "Artifact Count": artifact_count,
-            "Size": repo_size
+            "Artifact Count (Folders)": folder_count,
+            "Size (Bytes)": total_size
         })
     return repo_details
 
@@ -73,7 +84,7 @@ def fetch_repo_details():
 def write_to_csv(repo_details, filename="artifactory_repos.csv"):
     fieldnames = [
         "Name", "Package Type", "Repository Path", "Repository Layout", 
-        "Created", "Artifact Count", "Size"
+        "Artifact Count (Folders)", "Size (Bytes)"
     ]
     with open(filename, mode='w', newline='') as file:
         writer = csv.DictWriter(file, fieldnames=fieldnames)

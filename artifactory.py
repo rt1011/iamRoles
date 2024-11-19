@@ -37,7 +37,7 @@ def traverse_repo(repo_key, path=""):
     endpoint = f"/artifactory/api/storage/{repo_key}/{path}"
     try:
         data = make_request("GET", endpoint, headers=auth_header)
-        total_size = data.get("size", 0)
+        total_size = int(data.get("size", 0))
         folder_count = 0
 
         # If there are children, traverse them
@@ -64,8 +64,11 @@ def fetch_repo_details():
         package_type = repo.get('packageType', 'N/A')
 
         print(f"Processing repository {idx}/{len(repos)}: {repo_key}...")
+
         try:
             total_size, folder_count = traverse_repo(repo_key)
+            # Print size and folder count
+            print(f"Repository: {repo_key}, Size: {total_size} bytes, Artifact Count: {folder_count}")
         except Exception as e:
             print(f"Failed to traverse {repo_key}: {e}")
             total_size, folder_count = "N/A", "N/A"

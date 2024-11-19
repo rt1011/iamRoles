@@ -29,29 +29,21 @@ def get_repositories():
     repos = make_request("GET", "/artifactory/api/repositories", headers=auth_header)
     return repos
 
-# Recursively traverse repository to calculate size and count folders
-def traverse_repo(repo_key, path=""):
+# Get artifact count and size using deep listing
+def get_artifact_details(repo_key):
     auth_header = {
         "Authorization": f"Basic {base64.b64encode(f'{ARTIFACTORY_USER}:{ENCRYPTED_PASSWORD}'.encode()).decode()}"
     }
-    endpoint = f"/artifactory/api/storage/{repo_key}/{path}"
+    endpoint = f"/artifactory/api/storage/{repo_key}?list&deep=1"
     try:
         data = make_request("GET", endpoint, headers=auth_header)
-        total_size = int(data.get("size", 0))
-        folder_count = 0
-
-        # If there are children, traverse them
-        if "children" in data:
-            for child in data["children"]:
-                if child["folder"]:
-                    folder_count += 1
-                    child_size, child_folders = traverse_repo(repo_key, f"{path}/{child['uri'].lstrip('/')}")
-                    total_size += child_size
-                    folder_count += child_folders
-        return total_size, folder_count
+        files = data.get("files", [])
+        artifact_count = len(files)
+        total_size = sum(file.get("size", 0) for file in files)
+        return artifact_count, total_size
     except Exception as e:
-        print(f"Failed to traverse path {path} in {repo_key}: {e}")
-        return 0, 0
+        print(f"Failed to fetch details for {repo_key}: {e}")
+        return "N/A", "N/A"
 
 # Fetch repository details
 def fetch_repo_details():
@@ -66,20 +58,20 @@ def fetch_repo_details():
         print(f"Processing repository {idx}/{len(repos)}: {repo_key}...")
 
         try:
-            total_size, folder_count = traverse_repo(repo_key)
-            # Print size and folder count
-            print(f"Repository: {repo_key}, Size: {total_size} bytes, Artifact Count: {folder_count}")
+            artifact_count, total_size = get_artifact_details(repo_key)
+            # Print size and artifact count
+            print(f"Repository: {repo_key}, Artifact Count: {artifact_count}, Total Size: {total_size} bytes")
         except Exception as e:
-            print(f"Failed to traverse {repo_key}: {e}")
-            total_size, folder_count = "N/A", "N/A"
+            print(f"Failed to process repository {repo_key}: {e}")
+            artifact_count, total_size = "N/A", "N/A"
 
         repo_details.append({
             "Name": repo_key,
             "Package Type": package_type,
             "Repository Path": f"{repo_key}/",
             "Repository Layout": repo_layout,
-            "Artifact Count (Folders)": folder_count,
-            "Size (Bytes)": total_size
+            "Artifact Count": artifact_count,
+            "Total Size (Bytes)": total_size
         })
     return repo_details
 
@@ -87,7 +79,7 @@ def fetch_repo_details():
 def write_to_csv(repo_details, filename="artifactory_repos.csv"):
     fieldnames = [
         "Name", "Package Type", "Repository Path", "Repository Layout", 
-        "Artifact Count (Folders)", "Size (Bytes)"
+        "Artifact Count", "Total Size (Bytes)"
     ]
     with open(filename, mode='w', newline='') as file:
         writer = csv.DictWriter(file, fieldnames=fieldnames)

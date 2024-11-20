@@ -7,6 +7,7 @@ import csv
 ARTIFACTORY_URL = "your.artifactory.instance"  # Replace with your Artifactory URL (e.g., artifactory.example.com)
 ARTIFACTORY_USER = "your-username"  # Replace with your username
 ENCRYPTED_PASSWORD = "your-encrypted-password"  # Replace with your encrypted password
+OUTPUT_CSV = "artifactory_repos.csv"  # Output file
 
 # Function to make HTTP requests
 def make_request(method, endpoint, headers=None):
@@ -29,26 +30,36 @@ def get_repositories():
     repos = make_request("GET", "/artifactory/api/repositories", headers=auth_header)
     return repos
 
-# Get artifact count and size using deep listing
-def get_artifact_details(repo_key):
+# Get repository summary details (faster than listing all files)
+def get_repo_summary(repo_key):
     auth_header = {
         "Authorization": f"Basic {base64.b64encode(f'{ARTIFACTORY_USER}:{ENCRYPTED_PASSWORD}'.encode()).decode()}"
     }
-    endpoint = f"/artifactory/api/storage/{repo_key}?list&deep=1"
+    endpoint = f"/artifactory/api/storage/{repo_key}"
     try:
         data = make_request("GET", endpoint, headers=auth_header)
-        files = data.get("files", [])
-        artifact_count = len(files)
-        total_size_bytes = sum(file.get("size", 0) for file in files)
-        total_size_mb = total_size_bytes / (1024 * 1024)  # Convert bytes to MB
-        return artifact_count, round(total_size_mb, 2)
+        total_size_bytes = int(data.get("repoSize", 0))
+        total_size_mb = total_size_bytes / (1024 * 1024)  # Convert to MB
+        artifact_count = int(data.get("filesCount", 0))  # Number of files
+        return round(total_size_mb, 2), artifact_count
     except Exception as e:
-        print(f"Failed to fetch details for {repo_key}: {e}")
+        print(f"Failed to fetch summary for {repo_key}: {e}")
         return "N/A", "N/A"
 
-# Fetch repository details
+# Write repository details to CSV (real-time updates)
+def write_to_csv(repo_details, mode="w"):
+    fieldnames = [
+        "Name", "Package Type", "Repository Path", "Repository Layout",
+        "Artifact Count", "Total Size (MB)"
+    ]
+    with open(OUTPUT_CSV, mode=mode, newline='') as file:
+        writer = csv.DictWriter(file, fieldnames=fieldnames)
+        if mode == "w":  # Write header only when creating the file
+            writer.writeheader()
+        writer.writerow(repo_details)
+
+# Fetch and process repositories
 def fetch_repo_details():
-    repo_details = []
     repos = get_repositories()
     for idx, repo in enumerate(repos, 1):
         repo_key = repo['key']
@@ -59,38 +70,32 @@ def fetch_repo_details():
         print(f"Processing repository {idx}/{len(repos)}: {repo_key}...")
 
         try:
-            artifact_count, total_size_mb = get_artifact_details(repo_key)
-            # Print size and artifact count
+            total_size_mb, artifact_count = get_repo_summary(repo_key)
             print(f"Repository: {repo_key}, Artifact Count: {artifact_count}, Total Size: {total_size_mb} MB")
         except Exception as e:
             print(f"Failed to process repository {repo_key}: {e}")
-            artifact_count, total_size_mb = "N/A", "N/A"
+            total_size_mb, artifact_count = "N/A", "N/A"
 
-        repo_details.append({
+        # Prepare repo details
+        repo_details = {
             "Name": repo_key,
             "Package Type": package_type,
             "Repository Path": f"{repo_key}/",
             "Repository Layout": repo_layout,
             "Artifact Count": artifact_count,
             "Total Size (MB)": total_size_mb
-        })
-    return repo_details
+        }
 
-# Write details to CSV
-def write_to_csv(repo_details, filename="artifactory_repos.csv"):
-    fieldnames = [
-        "Name", "Package Type", "Repository Path", "Repository Layout", 
-        "Artifact Count", "Total Size (MB)"
-    ]
-    with open(filename, mode='w', newline='') as file:
-        writer = csv.DictWriter(file, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(repo_details)
+        # Write to CSV immediately
+        write_to_csv(repo_details, mode="a")
 
 if __name__ == "__main__":
     try:
-        repo_details = fetch_repo_details()
-        write_to_csv(repo_details)
-        print("Repository details have been written to artifactory_repos.csv.")
+        print("Starting repository processing...")
+        # Create the CSV file and write the header
+        write_to_csv({}, mode="w")
+        # Process repositories
+        fetch_repo_details()
+        print(f"Repository details have been written to {OUTPUT_CSV}.")
     except Exception as e:
         print(f"An error occurred: {e}")

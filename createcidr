@@ -1,0 +1,75 @@
+import ipaddress
+import csv
+from itertools import chain
+
+
+def read_csv(file_path, column_name):
+    """Read a CSV file and return a list of values from the specified column."""
+    with open(file_path, mode='r') as file:
+        reader = csv.DictReader(file)
+        return [row[column_name].strip() for row in reader]
+
+
+def write_csv(file_path, column_name, data):
+    """Write data to a CSV file under the specified column name."""
+    with open(file_path, mode='w', newline='') as file:
+        writer = csv.DictWriter(file, fieldnames=[column_name])
+        writer.writeheader()
+        writer.writerows([{column_name: item} for item in data])
+
+
+def create_cidrs_for_ips(ips):
+    """Create /24 CIDRs to cover the given IPs."""
+    sorted_ips = sorted(ips)
+    cidrs = []
+    block = []
+    for ip in sorted_ips:
+        if not block or ip - block[-1] < 256:  # Ensure IPs fit in the same /24 block
+            block.append(ip)
+        else:
+            cidrs.append(ipaddress.ip_network((block[0], 24), strict=False))
+            block = [ip]
+    if block:
+        cidrs.append(ipaddress.ip_network((block[0], 24), strict=False))
+    return cidrs
+
+
+def main():
+    # File paths
+    ips_file = "ips.csv"
+    cidrs_file = "cidrs.csv"
+    output_file = "updated_cidrs.csv"
+
+    # Column names
+    ip_column = "IP"
+    cidr_column = "CIDR"
+
+    # Read data
+    ips = [ipaddress.ip_address(ip) for ip in read_csv(ips_file, ip_column)]
+    existing_cidrs = [ipaddress.ip_network(cidr) for cidr in read_csv(cidrs_file, cidr_column)]
+
+    # Find uncovered IPs
+    uncovered_ips = [ip for ip in ips if not any(ip in cidr for cidr in existing_cidrs)]
+
+    # Print uncovered IPs
+    if uncovered_ips:
+        print("Uncovered IPs:")
+        for ip in uncovered_ips:
+            print(ip)
+    else:
+        print("All IPs are already covered by existing CIDRs.")
+
+    # Create new CIDRs for uncovered IPs
+    new_cidrs = create_cidrs_for_ips(uncovered_ips)
+
+    # Merge new CIDRs with existing ones
+    all_cidrs = sorted(chain(existing_cidrs, new_cidrs), key=lambda x: (x.network_address, x.prefixlen))
+
+    # Write updated CIDRs to a new CSV
+    write_csv(output_file, cidr_column, [str(cidr) for cidr in all_cidrs])
+
+    print(f"\nNew CIDRs created and merged with existing CIDRs. Results saved to '{output_file}'.")
+
+
+if __name__ == "__main__":
+    main()

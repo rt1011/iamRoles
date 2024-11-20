@@ -39,8 +39,9 @@ def get_artifact_details(repo_key):
         data = make_request("GET", endpoint, headers=auth_header)
         files = data.get("files", [])
         artifact_count = len(files)
-        total_size = sum(file.get("size", 0) for file in files)
-        return artifact_count, total_size
+        total_size_bytes = sum(file.get("size", 0) for file in files)
+        total_size_mb = total_size_bytes / (1024 * 1024)  # Convert bytes to MB
+        return artifact_count, round(total_size_mb, 2)
     except Exception as e:
         print(f"Failed to fetch details for {repo_key}: {e}")
         return "N/A", "N/A"
@@ -58,12 +59,12 @@ def fetch_repo_details():
         print(f"Processing repository {idx}/{len(repos)}: {repo_key}...")
 
         try:
-            artifact_count, total_size = get_artifact_details(repo_key)
+            artifact_count, total_size_mb = get_artifact_details(repo_key)
             # Print size and artifact count
-            print(f"Repository: {repo_key}, Artifact Count: {artifact_count}, Total Size: {total_size} bytes")
+            print(f"Repository: {repo_key}, Artifact Count: {artifact_count}, Total Size: {total_size_mb} MB")
         except Exception as e:
             print(f"Failed to process repository {repo_key}: {e}")
-            artifact_count, total_size = "N/A", "N/A"
+            artifact_count, total_size_mb = "N/A", "N/A"
 
         repo_details.append({
             "Name": repo_key,
@@ -71,7 +72,7 @@ def fetch_repo_details():
             "Repository Path": f"{repo_key}/",
             "Repository Layout": repo_layout,
             "Artifact Count": artifact_count,
-            "Total Size (Bytes)": total_size
+            "Total Size (MB)": total_size_mb
         })
     return repo_details
 
@@ -79,7 +80,7 @@ def fetch_repo_details():
 def write_to_csv(repo_details, filename="artifactory_repos.csv"):
     fieldnames = [
         "Name", "Package Type", "Repository Path", "Repository Layout", 
-        "Artifact Count", "Total Size (Bytes)"
+        "Artifact Count", "Total Size (MB)"
     ]
     with open(filename, mode='w', newline='') as file:
         writer = csv.DictWriter(file, fieldnames=fieldnames)

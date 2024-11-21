@@ -30,17 +30,18 @@ def get_repositories():
     repos = make_request("GET", "/artifactory/api/repositories", headers=auth_header)
     return repos
 
-# Get repository summary details (faster than listing all files)
+# Get repository summary details using list&deep=1
 def get_repo_summary(repo_key):
     auth_header = {
         "Authorization": f"Basic {base64.b64encode(f'{ARTIFACTORY_USER}:{ENCRYPTED_PASSWORD}'.encode()).decode()}"
     }
-    endpoint = f"/artifactory/api/storage/{repo_key}"
+    endpoint = f"/artifactory/api/storage/{repo_key}?list&deep=1"
     try:
         data = make_request("GET", endpoint, headers=auth_header)
-        total_size_bytes = int(data.get("repoSize", 0))
+        files = data.get("files", [])
+        total_size_bytes = sum(file.get("size", 0) for file in files)
         total_size_mb = total_size_bytes / (1024 * 1024)  # Convert to MB
-        artifact_count = int(data.get("filesCount", 0))  # Number of files
+        artifact_count = len(files)
         return round(total_size_mb, 2), artifact_count
     except Exception as e:
         print(f"Failed to fetch summary for {repo_key}: {e}")

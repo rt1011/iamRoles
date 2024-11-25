@@ -50,7 +50,7 @@ def update_csv():
 
         # Process each row in the input file
         for row in reader:
-            repo_key = row.get("lname")  # Assuming 'lname' column contains the repo key
+            repo_key = row.get("Name")  # Assuming 'Name' column contains the repo key
             if not repo_key:
                 print("Repository name missing in the row, skipping...")
                 continue

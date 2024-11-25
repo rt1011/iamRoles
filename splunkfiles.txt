@@ -1,0 +1,4 @@
+index=your_index sourcetype=cloudfront_logs
+| spath input=requestParameters path=UserName output=userName
+| search userName IN (a, b, c, d)
+| table userName src_ip

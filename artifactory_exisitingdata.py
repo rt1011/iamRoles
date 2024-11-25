@@ -24,25 +24,25 @@ def make_request(method, endpoint, headers=None):
         raise Exception(f"HTTP request failed: {response.status} {response.reason}")
 
 # Get repository details from Artifactory
-def get_repo_details(repo_key):
+def get_repo_metadata(repo_key):
     auth_header = {
         "Authorization": f"Basic {base64.b64encode(f'{ARTIFACTORY_USER}:{ENCRYPTED_PASSWORD}'.encode()).decode()}"
     }
     endpoint = f"/artifactory/api/repositories/{repo_key}"
     try:
         repo_details = make_request("GET", endpoint, headers=auth_header)
-        repo_type = repo_details.get("type", "N/A")
-        full_path = f"{ARTIFACTORY_URL}/artifactory/{repo_key}/"
-        return repo_type, full_path
+        repo_type = repo_details.get("type", "N/A")  # Repository type (local/remote/virtual)
+        repo_layout = repo_details.get("repositoryLayout", "N/A")  # Repository layout
+        return repo_type, repo_layout
     except Exception as e:
-        print(f"Failed to fetch details for {repo_key}: {e}")
+        print(f"Failed to fetch metadata for {repo_key}: {e}")
         return "N/A", "N/A"
 
 # Update CSV with additional columns
 def update_csv():
     with open(INPUT_CSV, mode="r") as infile, open(OUTPUT_CSV, mode="w", newline="") as outfile:
         reader = csv.DictReader(infile)
-        fieldnames = reader.fieldnames + ["Repository Type", "Full Path"]
+        fieldnames = reader.fieldnames + ["Repository Type", "Repository Layout", "Full Path"]
         writer = csv.DictWriter(outfile, fieldnames=fieldnames)
         
         # Write header to the output file
@@ -56,10 +56,12 @@ def update_csv():
                 continue
             
             print(f"Fetching details for repository: {repo_key}")
-            repo_type, full_path = get_repo_details(repo_key)
+            repo_type, repo_layout = get_repo_metadata(repo_key)
+            full_path = f"{ARTIFACTORY_URL}/artifactory/{repo_key}/"
 
             # Add new data to the row
             row["Repository Type"] = repo_type
+            row["Repository Layout"] = repo_layout
             row["Full Path"] = full_path
 
             # Write updated row to the output file

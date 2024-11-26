@@ -2,16 +2,24 @@ import boto3
 import csv
 from datetime import datetime
 
-def get_account_name():
-    """Fetch the AWS account name using the account alias."""
-    client = boto3.client('iam')
+def get_account_info():
+    """Fetch the AWS account name and account ID."""
+    client = boto3.client('sts')
     try:
-        response = client.list_account_aliases()
+        # Get the account ID
+        identity = client.get_caller_identity()
+        account_id = identity.get('Account')
+
+        # Get the account alias (name)
+        iam_client = boto3.client('iam')
+        response = iam_client.list_account_aliases()
         account_aliases = response.get('AccountAliases', [])
-        return account_aliases[0] if account_aliases else "unknown_account"
+        account_name = account_aliases[0] if account_aliases else "unknown_account"
+
+        return account_name, account_id
     except Exception as e:
-        print(f"Error fetching account name: {e}")
-        return "unknown_account"
+        print(f"Error fetching account info: {e}")
+        return "unknown_account", "unknown_account"
 
 def fetch_config_rules_with_iam():
     """Fetch Config rules and filter those with 'IAM' in their name or description."""
@@ -61,6 +69,7 @@ def fetch_config_rules_with_iam():
             if 'IAM' in rule_name.upper() or 'IAM' in description.upper():
                 print(f"Matched rule: {rule_name}")
                 filtered_rules.append({
+                    'AccountID': identity.get('Account'),  # Add Account ID
                     'RuleName': rule_name,
                     'Description': description,
                     'ARN': arn,
@@ -78,7 +87,7 @@ def fetch_config_rules_with_iam():
 
 def write_to_csv(data, filename):
     """Write the filtered Config rules to a CSV file."""
-    headers = ['RuleName', 'Description', 'ARN', 'RuleType', 'Scope']
+    headers = ['AccountID', 'RuleName', 'Description', 'ARN', 'RuleType', 'Scope']
     try:
         with open(filename, mode='w', newline='', encoding='utf-8') as file:
             writer = csv.DictWriter(file, fieldnames=headers)
@@ -90,15 +99,15 @@ def write_to_csv(data, filename):
 
 def main():
     """Main function to fetch and export Config rules with 'IAM' in name or description."""
-    # Get the AWS account name
-    account_name = get_account_name()
+    # Get the AWS account info
+    account_name, account_id = get_account_info()
 
     # Fetch filtered Config rules
     rules_with_iam = fetch_config_rules_with_iam()
 
-    # Define the output CSV filename with account name
+    # Define the output CSV filename with account name and account ID
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"{account_name}_aws_config_rules_with_iam_{timestamp}.csv"
+    filename = f"{account_name}_{account_id}_aws_config_rules_with_iam_{timestamp}.csv"
 
     # Write data to CSV
     if rules_with_iam:

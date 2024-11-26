@@ -17,9 +17,33 @@ def fetch_config_rules_with_iam():
     """Fetch Config rules and filter those with 'IAM' in their name or description."""
     client = boto3.client('config')
     try:
-        # Fetch all Config rules
-        response = client.describe_config_rules()
-        config_rules = response.get('ConfigRules', [])
+        # Initialize variables for pagination
+        config_rules = []
+        next_token = None
+
+        # Paginate through all Config rules
+        while True:
+            if next_token:
+                response = client.describe_config_rules(NextToken=next_token)
+            else:
+                response = client.describe_config_rules()
+
+            # Add fetched rules to the list
+            config_rules.extend(response.get('ConfigRules', []))
+
+            # Check for more pages
+            next_token = response.get('NextToken')
+            if not next_token:
+                break
+
+        if not config_rules:
+            print("No Config rules found.")
+            return []
+
+        # Debugging output: list all fetched rules
+        print(f"Fetched {len(config_rules)} Config rules:")
+        for rule in config_rules:
+            print(f"  - RuleName: {rule.get('ConfigRuleName')}, Description: {rule.get('Description')}")
 
         # Filter rules with "IAM" in name or description and gather details
         filtered_rules = []
@@ -30,8 +54,12 @@ def fetch_config_rules_with_iam():
             scope = rule.get('Scope', {})
             rule_type = rule.get('Source', {}).get('SourceIdentifier', 'Unknown')
 
-            # Check for "IAM" in name or description
+            # Debugging output: check the rule for "IAM"
+            print(f"Checking rule: {rule_name} - Description: {description}")
+
+            # Case-insensitive check for "IAM"
             if 'IAM' in rule_name.upper() or 'IAM' in description.upper():
+                print(f"Matched rule: {rule_name}")
                 filtered_rules.append({
                     'RuleName': rule_name,
                     'Description': description,
@@ -39,6 +67,9 @@ def fetch_config_rules_with_iam():
                     'RuleType': rule_type,
                     'Scope': scope
                 })
+
+        if not filtered_rules:
+            print("No Config rules with 'IAM' in name or description were found.")
 
         return filtered_rules
     except Exception as e:
@@ -73,7 +104,7 @@ def main():
     if rules_with_iam:
         write_to_csv(rules_with_iam, filename)
     else:
-        print("No Config rules with 'IAM' in name or description were found.")
+        print("No matching Config rules to write to the CSV file.")
 
 if __name__ == "__main__":
     main()

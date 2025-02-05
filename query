@@ -1,0 +1,18 @@
+SELECT 
+  eventTime,
+  eventName,
+  eventSource,
+  userIdentity,
+  requestParameters,
+  responseElements
+FROM your_cloudtrail_table
+WHERE userIdentity.userName = 'abc'
+  AND eventName IN (
+    'AttachUserPolicy',
+    'DetachUserPolicy',
+    'PutUserPolicy',
+    'DeleteUserPolicy',
+    'AddUserToGroup',
+    'RemoveUserFromGroup'
+  )
+ORDER BY eventTime DESC;

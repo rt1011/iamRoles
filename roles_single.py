@@ -1,7 +1,11 @@
 import boto3
+import csv
 
 # Updated privileged actions keyword
 PRIVILEGED_ACTIONS_KEYWORDS = ["StartSession"]
+
+# Updated account_aliases mapping
+account_aliases = {"3213121": "MyAccount", "33434334": "secondaccount"}
 
 def list_iam_roles_local(iam_client):
     """
@@ -131,7 +135,7 @@ def gather_iam_roles_from_local_account(only_privileged=True):
     iam_client = boto3.client('iam')
     sts_client = boto3.client('sts')
     account_id = sts_client.get_caller_identity()['Account']
-    account_alias = "LocalAccount"  # You can update this as needed
+    account_alias = account_aliases.get(account_id, "LocalAccount")
     
     fieldnames = [
         'AccountID', 'AccountAlias', 'RoleName', 'Policies', 'PolicyCount',
@@ -175,6 +179,13 @@ def gather_iam_roles_from_local_account(only_privileged=True):
 
 if __name__ == "__main__":
     fields, data = gather_iam_roles_from_local_account(only_privileged=True)
-    # For demonstration, print out the gathered role information.
-    for role_info in data:
-        print(role_info)
+    
+    # Write the output to a CSV file
+    output_csv = 'iam_roles_output.csv'
+    with open(output_csv, mode='w', newline='') as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=fields)
+        writer.writeheader()
+        for role_info in data:
+            writer.writerow(role_info)
+    
+    print(f"CSV file '{output_csv}' has been written.")

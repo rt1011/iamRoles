@@ -1,11 +1,15 @@
 import boto3
 import csv
 
-# Updated privileged actions keyword
-PRIVILEGED_ACTIONS_KEYWORDS = ["StartSession"]
-
-# Updated account_aliases mapping
+# The account_aliases mapping: update with your account IDs and names.
 account_aliases = {"3213121": "MyAccount", "33434334": "secondaccount"}
+
+def is_privileged_action(action):
+    """
+    Returns True only if the action is exactly "ssm:StartSession" (case-insensitive) or "*" .
+    """
+    normalized_action = action.lower()
+    return normalized_action == "*" or normalized_action == "ssm:startsession"
 
 def list_iam_roles_local(iam_client):
     """
@@ -26,7 +30,6 @@ def get_combined_policies(iam_client, role_name):
     policies.extend([policy['PolicyName'] for policy in managed_policies])  # Add managed policies
     
     policy_count = len(policies)
-    
     sorted_policies = sorted(policies, key=lambda s: s.lower())
     
     return sorted_policies, policy_count
@@ -64,18 +67,6 @@ def check_privileged_role(iam_client, role_name, only_privileged=True):
     if only_privileged and tags.get('Privileged') != 'Yes':
         return False, tags
     return True, tags
-
-def is_privileged_action(action):
-    action_name = action.split(":")[-1]
-    
-    if action_name == "*":
-        return True
-
-    for keyword in PRIVILEGED_ACTIONS_KEYWORDS:
-        if action_name.lower().startswith(keyword.lower()):
-            return True
-    
-    return False
 
 def check_privileged_actions(iam_client, role_name):
     allow_actions = []
@@ -135,6 +126,7 @@ def gather_iam_roles_from_local_account(only_privileged=True):
     iam_client = boto3.client('iam')
     sts_client = boto3.client('sts')
     account_id = sts_client.get_caller_identity()['Account']
+    # Get the account alias from the mapping; default to "LocalAccount" if not found.
     account_alias = account_aliases.get(account_id, "LocalAccount")
     
     fieldnames = [
@@ -147,9 +139,9 @@ def gather_iam_roles_from_local_account(only_privileged=True):
 
     for role in roles:
         role_name = role['RoleName']
-        is_privileged, tags = check_privileged_role(iam_client, role_name, only_privileged)
+        is_priv, tags = check_privileged_role(iam_client, role_name, only_privileged)
         
-        if is_privileged:
+        if is_priv:
             policies, policy_count = get_combined_policies(iam_client, role_name)
             conditions, _ = get_policy_conditions_and_denies(iam_client, role_name)
             allow_actions_list, deny_actions_list = check_privileged_actions(iam_client, role_name)
@@ -180,8 +172,13 @@ def gather_iam_roles_from_local_account(only_privileged=True):
 if __name__ == "__main__":
     fields, data = gather_iam_roles_from_local_account(only_privileged=True)
     
-    # Write the output to a CSV file
-    output_csv = 'iam_roles_output.csv'
+    # Get the account alias for naming the CSV file.
+    sts_client = boto3.client('sts')
+    account_id = sts_client.get_caller_identity()['Account']
+    account_alias = account_aliases.get(account_id, "LocalAccount")
+    output_csv = f'iam_roles_output_{account_alias}.csv'
+    
+    # Write the output to a CSV file.
     with open(output_csv, mode='w', newline='') as csvfile:
         writer = csv.DictWriter(csvfile, fieldnames=fields)
         writer.writeheader()

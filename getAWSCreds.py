@@ -8,6 +8,7 @@ import getpass
 
 # Set up AWS and IdP details
 IDP_LOGIN_URL = "https://your-idp-login-url.com"
+MFA_SUBMIT_URL = "https://your-idp-mfa-url.com"
 AWS_ROLE_ARN = "arn:aws:iam::ACCOUNT_ID:role/YOUR_ROLE"
 AWS_IDP_ARN = "arn:aws:iam::ACCOUNT_ID:saml-provider/YOUR_IDP"
 AWS_PROFILE_NAME = "sso-session"
@@ -22,6 +23,7 @@ def get_user_credentials():
 def get_saml_assertion(username, password):
     session = requests.Session()
 
+    # Step 1: Login with Username & Password
     payload = {
         "username": username,
         "password": password
@@ -33,7 +35,19 @@ def get_saml_assertion(username, password):
         print("❌ Authentication failed. Check your credentials.")
         return None
 
-    # Extract SAML Response from HTML form
+    # Step 2: Check for MFA Challenge
+    if "MFA required" in response.text or "mfa_token" in response.text:
+        mfa_code = input("Enter your MFA code: ")
+        mfa_payload = {"mfa_token": mfa_code}
+
+        mfa_response = session.post(MFA_SUBMIT_URL, data=mfa_payload)
+
+        if mfa_response.status_code != 200:
+            print("❌ MFA authentication failed.")
+            return None
+        response = mfa_response  # Use the MFA-authenticated response
+
+    # Step 3: Extract SAML Response
     tree = ET.ElementTree(ET.fromstring(response.text))
     saml_assertion = None
     for elem in tree.iter():

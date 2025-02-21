@@ -5,13 +5,14 @@ import xml.etree.ElementTree as ET
 import configparser
 import os
 import getpass
+import certifi
 
-# Set up AWS and IdP details
-IDP_LOGIN_URL = "https://your-idp-login-url.com"
-MFA_SUBMIT_URL = "https://your-idp-mfa-url.com"
+# Set up AWS and Entra ID details
+IDP_LOGIN_URL = "https://login.microsoftonline.com/YOUR_TENANT_ID/saml2"
 AWS_ROLE_ARN = "arn:aws:iam::ACCOUNT_ID:role/YOUR_ROLE"
 AWS_IDP_ARN = "arn:aws:iam::ACCOUNT_ID:saml-provider/YOUR_IDP"
 AWS_PROFILE_NAME = "sso-session"
+CERT_PATH = certifi.where()  # Ensures SSL certificate verification works
 
 # Prompt user for credentials
 def get_user_credentials():
@@ -29,25 +30,13 @@ def get_saml_assertion(username, password):
         "password": password
     }
 
-    response = session.post(IDP_LOGIN_URL, data=payload)
+    response = session.post(IDP_LOGIN_URL, data=payload, verify=CERT_PATH)
 
     if response.status_code != 200:
         print("❌ Authentication failed. Check your credentials.")
         return None
 
-    # Step 2: Check for MFA Challenge
-    if "MFA required" in response.text or "mfa_token" in response.text:
-        mfa_code = input("Enter your MFA code: ")
-        mfa_payload = {"mfa_token": mfa_code}
-
-        mfa_response = session.post(MFA_SUBMIT_URL, data=mfa_payload)
-
-        if mfa_response.status_code != 200:
-            print("❌ MFA authentication failed.")
-            return None
-        response = mfa_response  # Use the MFA-authenticated response
-
-    # Step 3: Extract SAML Response
+    # Step 2: Extract SAML Response
     tree = ET.ElementTree(ET.fromstring(response.text))
     saml_assertion = None
     for elem in tree.iter():
@@ -105,7 +94,7 @@ if __name__ == "__main__":
             update_aws_cli_config(credentials)
 
             # Print the credentials
-            print("\n🔑 **Session Credentials**")
+            print("\n🔑 **AWS Session Credentials**")
             print(f"🔹 AWS Access Key ID: {credentials['AccessKeyId']}")
             print(f"🔹 AWS Secret Access Key: {credentials['SecretAccessKey']}")
             print(f"🔹 AWS Session Token: {credentials['SessionToken']}\n")

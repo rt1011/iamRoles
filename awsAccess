@@ -1,0 +1,117 @@
+import requests
+import getpass
+import boto3
+import configparser
+import os
+import base64
+from bs4 import BeautifulSoup
+
+# 🔹 Azure AD SAML Login Details
+IDP_LOGIN_URL = "https://your-idp-login-url.com"
+
+# 🔹 AWS IAM Role & Identity Provider (SAML)
+AWS_ROLE_ARN = "arn:aws:iam::ACCOUNT_ID:role/YOUR_ROLE"
+AWS_IDP_ARN = "arn:aws:iam::ACCOUNT_ID:saml-provider/YOUR_IDP"
+AWS_PROFILE_NAME = "sso-profile"
+
+# 🔹 Function: Authenticate with Azure AD and Retrieve SAML Assertion
+def get_saml_assertion():
+    """Logs into Azure AD, follows redirects, and retrieves SAML assertion."""
+    session = requests.Session()
+
+    # Step 1: Get Login Page
+    login_page = session.get(IDP_LOGIN_URL)
+    soup = BeautifulSoup(login_page.text, "html.parser")
+
+    # Find login form inputs (Modify if Azure changes its structure)
+    login_form_action = soup.find("form")["action"]
+    login_url = IDP_LOGIN_URL + login_form_action  # Absolute URL
+
+    # Step 2: Enter Username & Password
+    username = input("Enter your Azure AD username: ")
+    password = getpass.getpass("Enter your password: ")
+
+    payload = {
+        "username": username,
+        "password": password
+    }
+
+    login_response = session.post(login_url, data=payload, allow_redirects=True)
+
+    # Step 3: Check for MFA Prompt
+    if "Enter your verification code" in login_response.text:
+        mfa_code = input("Enter your MFA code: ")
+        mfa_payload = {"mfa_code": mfa_code}
+        session.post(login_url, data=mfa_payload, allow_redirects=True)
+
+    # Step 4: Extract SAML Assertion
+    saml_response_page = session.get(IDP_LOGIN_URL)
+    soup = BeautifulSoup(saml_response_page.text, "html.parser")
+
+    # Find the SAMLResponse hidden input field
+    saml_assertion_input = soup.find("input", {"name": "SAMLResponse"})
+
+    if not saml_assertion_input:
+        print("❌ SAML assertion not found!")
+        return None
+
+    saml_assertion = saml_assertion_input["value"]
+
+    print("\n✅ Successfully retrieved SAML assertion.")
+    return saml_assertion.strip()
+
+# 🔹 Function: Assume AWS Role Using SAML Assertion
+def assume_role_with_saml(saml_assertion):
+    """Uses SAML assertion to assume an AWS role."""
+    client = boto3.client("sts")
+
+    response = client.assume_role_with_saml(
+        RoleArn=AWS_ROLE_ARN,
+        PrincipalArn=AWS_IDP_ARN,
+        SAMLAssertion=saml_assertion
+    )
+
+    return response["Credentials"]
+
+# 🔹 Function: Store AWS Session Credentials in AWS CLI
+def update_aws_cli_config(credentials):
+    """Saves the temporary AWS session credentials to AWS CLI profile."""
+    config = configparser.ConfigParser()
+    aws_config_file = os.path.expanduser("~/.aws/credentials")
+
+    config.read(aws_config_file)
+
+    if AWS_PROFILE_NAME not in config.sections():
+        config.add_section(AWS_PROFILE_NAME)
+
+    config.set(AWS_PROFILE_NAME, "aws_access_key_id", credentials["AccessKeyId"])
+    config.set(AWS_PROFILE_NAME, "aws_secret_access_key", credentials["SecretAccessKey"])
+    config.set(AWS_PROFILE_NAME, "aws_session_token", credentials["SessionToken"])
+
+    with open(aws_config_file, "w") as configfile:
+        config.write(configfile)
+
+    print(f"\n✅ AWS session token saved under profile: {AWS_PROFILE_NAME}")
+
+# 🔹 Main Execution
+if __name__ == "__main__":
+    saml_assertion = get_saml_assertion()
+
+    if saml_assertion:
+        credentials = assume_role_with_saml(saml_assertion)
+
+        if credentials:
+            print("\n✅ Successfully assumed AWS role and obtained session token.")
+            update_aws_cli_config(credentials)
+
+            # 🔹 Print the credentials
+            print("\n🔑 **AWS Session Credentials**")
+            print(f"🔹 AWS Access Key ID: {credentials['AccessKeyId']}")
+            print(f"🔹 AWS Secret Access Key: {credentials['SecretAccessKey']}")
+            print(f"🔹 AWS Session Token: {credentials['SessionToken']}\n")
+
+            print(f"🎉 Use AWS CLI with: `aws s3 ls --profile {AWS_PROFILE_NAME}`")
+        else:
+            print("\n❌ Failed to assume AWS role.")
+    else:
+        print("\n❌ Failed to retrieve SAML assertion.")

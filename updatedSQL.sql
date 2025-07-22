@@ -3,21 +3,23 @@ WITH assume_role_events AS (
     eventTime AS assumeTime,
     json_extract_scalar(responseElements, '$.roleArn') AS role_assumed,
     json_extract_scalar(responseElements, '$.assumedRoleUser.arn') AS assumed_session_arn,
-    userIdentity.principalId AS assumed_by_principal,
+    json_extract_scalar(responseElements, '$.assumedRoleUser.principalId') AS assumed_principal_id,
     userIdentity.arn AS caller_arn,
+    userIdentity.principalId AS caller_principal_id,
     sourceIPAddress AS assume_ip
-  FROM "ac"
+  FROM "bc"
   WHERE eventName = 'AssumeRole'
-    AND day BETWEEN '2025/06/01' AND '2025/06/04'
+    AND day BETWEEN DATE '2025-05-28' AND DATE '2025-06-04'
 ),
 iam_changes AS (
   SELECT
     eventTime AS actionTime,
     eventName,
     userIdentity.arn AS action_session_arn,
+    userIdentity.principalId AS action_principal_id,
     json_extract_scalar(requestParameters, '$.roleName') AS role_name_modified,
     sourceIPAddress AS action_ip
-  FROM ac
+  FROM bc
   WHERE eventSource = 'iam.amazonaws.com'
     AND eventName IN (
       'CreateRole', 'UpdateRole', 'DeleteRole',
@@ -25,7 +27,7 @@ iam_changes AS (
       'AttachRolePolicy', 'DetachRolePolicy'
     )
     AND userIdentity.arn LIKE '%stacksets%'
-    AND day BETWEEN '2025/06/01' AND '2025/06/04'
+    AND day BETWEEN DATE '2025-06-01' AND DATE '2025-06-04'
 )
 
 SELECT
@@ -33,15 +35,16 @@ SELECT
   ic.eventName,
   ic.role_name_modified,
   ic.action_session_arn,
-  ar2.caller_arn AS true_human_actor,
-  ar2.assumeTime,
-  ar2.assume_ip,
+  COALESCE(ar2.caller_arn, ar1.caller_arn) AS resolved_actor,
+  ar2.assumeTime AS human_assume_time,
+  ar2.assume_ip AS human_assume_ip,
   ar1.caller_arn AS intermediate_actor,
+  ar1.assumeTime AS intermediate_assume_time,
   ar1.assume_ip AS intermediate_ip
 FROM iam_changes ic
 LEFT JOIN assume_role_events ar1
-  ON ic.action_session_arn = ar1.assumed_session_arn
+  ON ic.action_principal_id = ar1.assumed_principal_id
 LEFT JOIN assume_role_events ar2
-  ON ar1.caller_arn = ar2.assumed_session_arn
+  ON ar1.caller_principal_id = ar2.assumed_principal_id
 ORDER BY ic.actionTime DESC
 LIMIT 100;

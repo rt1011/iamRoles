@@ -3,11 +3,9 @@ WITH assume_role_events AS (
     eventTime AS assumeTime,
     json_extract_scalar(responseElements, '$.roleArn') AS role_assumed,
     json_extract_scalar(responseElements, '$.assumedRoleUser.arn') AS assumed_session_arn,
-    json_extract_scalar(responseElements, '$.assumedRoleUser.principalId') AS assumed_principal_id,
     userIdentity.arn AS caller_arn,
-    userIdentity.principalId AS caller_principal_id,
     sourceIPAddress AS assume_ip
-  FROM "prod-cloudtraildb"."prod-cloudtraillogs"
+  FROM a
   WHERE eventName = 'AssumeRole'
     AND day BETWEEN '2025/06/01' AND '2025/06/04'
 ),
@@ -15,11 +13,10 @@ iam_changes AS (
   SELECT
     eventTime AS actionTime,
     eventName,
-    json_extract_scalar(requestParameters, '$.roleName') AS role_name_modified,
     userIdentity.arn AS action_session_arn,
-    userIdentity.principalId AS action_principal_id,
+    json_extract_scalar(requestParameters, '$.roleName') AS role_name_modified,
     sourceIPAddress AS action_ip
-  FROM "prod-cloudtraildb"."prod-cloudtraillogs"
+  FROM  a
   WHERE eventSource = 'iam.amazonaws.com'
     AND eventName IN (
       'CreateRole', 'UpdateRole', 'DeleteRole',
@@ -43,8 +40,8 @@ SELECT
   ar1.assume_ip AS intermediate_ip
 FROM iam_changes ic
 LEFT JOIN assume_role_events ar1
-  ON ic.action_principal_id = ar1.assumed_principal_id
+  ON ic.action_session_arn = ar1.assumed_session_arn
 LEFT JOIN assume_role_events ar2
-  ON ar1.caller_principal_id = ar2.assumed_principal_id
+  ON ar1.caller_arn = ar2.assumed_session_arn
 ORDER BY ic.actionTime DESC
 LIMIT 100;

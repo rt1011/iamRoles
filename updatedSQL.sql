@@ -7,7 +7,7 @@ WITH assume_role_events AS (
     userIdentity.arn AS caller_arn,
     userIdentity.principalId AS caller_principal_id,
     sourceIPAddress AS assume_ip
-  FROM "bc"
+  FROM "a"
   WHERE eventName = 'AssumeRole'
     AND day BETWEEN DATE '2025-05-28' AND DATE '2025-06-04'
 ),
@@ -19,7 +19,7 @@ iam_changes AS (
     userIdentity.principalId AS action_principal_id,
     json_extract_scalar(requestParameters, '$.roleName') AS role_name_modified,
     sourceIPAddress AS action_ip
-  FROM bc
+  FROM "a"
   WHERE eventSource = 'iam.amazonaws.com'
     AND eventName IN (
       'CreateRole', 'UpdateRole', 'DeleteRole',
@@ -45,6 +45,6 @@ FROM iam_changes ic
 LEFT JOIN assume_role_events ar1
   ON ic.action_principal_id = ar1.assumed_principal_id
 LEFT JOIN assume_role_events ar2
-  ON ar1.caller_principal_id = ar2.assumed_principal_id
+  ON ar1.caller_arn = ar2.assumed_session_arn
 ORDER BY ic.actionTime DESC
 LIMIT 100;

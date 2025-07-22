@@ -7,19 +7,19 @@ WITH assume_role_events AS (
     userIdentity.arn AS caller_arn,
     userIdentity.principalId AS caller_principal_id,
     sourceIPAddress AS assume_ip
-  FROM ad
+  FROM "prod-cloudtraildb"."prod-cloudtraillogs"
   WHERE eventName = 'AssumeRole'
-    AND day BETWEEN DATE '2025-06-01' AND DATE '2025-06-04'
+    AND day BETWEEN '2025/06/01' AND '2025/06/04'
 ),
 iam_changes AS (
   SELECT
     eventTime AS actionTime,
     eventName,
+    json_extract_scalar(requestParameters, '$.roleName') AS role_name_modified,
     userIdentity.arn AS action_session_arn,
     userIdentity.principalId AS action_principal_id,
-    json_extract_scalar(requestParameters, '$.roleName') AS role_name_modified,
     sourceIPAddress AS action_ip
-  FROM ac
+  FROM "prod-cloudtraildb"."prod-cloudtraillogs"
   WHERE eventSource = 'iam.amazonaws.com'
     AND eventName IN (
       'CreateRole', 'UpdateRole', 'DeleteRole',
@@ -27,7 +27,7 @@ iam_changes AS (
       'AttachRolePolicy', 'DetachRolePolicy'
     )
     AND userIdentity.arn LIKE '%stacksets%'
-    AND day BETWEEN DATE '2025-06-01' AND DATE '2025-06-04'
+    AND day BETWEEN '2025/06/01' AND '2025/06/04'
 )
 
 SELECT

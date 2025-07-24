@@ -1,33 +1,51 @@
--- First, get the human actor and assumed session details
-WITH assumed_sessions AS (
+-- Step 1: Find the human actor who assumed the deployment role in 23622***
+WITH human_to_23622_session AS (
   SELECT 
     eventTime,
+    userIdentity.arn AS human_actor,
+    responseElements.assumedRoleUser.arn AS deployment_session_arn,
+    sourceIPAddress
+  FROM prod_cloudtrail_logs
+  WHERE day = '2025-06-04'
+    AND eventName = 'AssumeRole'
+    AND userIdentity.arn LIKE '%@epcusantander%'  -- or other SSO login marker
+    AND responseElements.assumedRoleUser.arn LIKE '%23622%'  -- session in security/automation account
+),
+
+-- Step 2: Find IAM changes made using that assumed session
+iam_changes AS (
+  SELECT 
+    eventTime,
+    eventName,
+    userIdentity.arn AS actor_session,
     userIdentity.sessionContext.sessionIssuer.arn AS role_arn,
-    userIdentity.arn AS caller_arn,
-    userIdentity.sessionContext.sessionIssuer.userName AS role_name,
-    userIdentity.sessionContext.sessionIssuer.accountId AS account_id,
-    userIdentity.sessionContext.sessionIssuer.type AS issuer_type,
-    userIdentity.sessionContext.sessionIssuer.userName AS issuer_name,
-    userIdentity.sessionContext.sessionIssuer.arn AS assumed_session_arn,
     sourceIPAddress,
-    eventName
-  FROM cloudtrail_logs
-  WHERE eventName = 'AssumeRole'
-    AND userIdentity.type = 'AssumedRole'
-    AND userIdentity.arn LIKE '%ad%' -- Your identifying tag
-    AND userIdentity.sessionContext.sessionIssuer.arn LIKE '%IAM%' -- optional filter
+    awsRegion,
+    requestParameters.roleName AS modified_role,
+    userIdentity.accountId AS target_account
+  FROM prod_cloudtrail_logs
+  WHERE day = '2025-06-04'
+    AND eventSource = 'iam.amazonaws.com'
+    AND eventName IN (
+      'CreateRole',
+      'PutRolePolicy',
+      'AttachRolePolicy',
+      'DetachRolePolicy',
+      'UpdateAssumeRolePolicy'
+    )
 )
 
--- Then, use that to filter other events that use the same session ARN
+-- Final: Join the IAM changes back to the original session
 SELECT 
-  ct.eventTime,
-  ct.eventName,
-  ct.userIdentity.sessionContext.sessionIssuer.arn AS used_session_arn,
-  ct.userIdentity.arn AS actual_caller,
-  ct.sourceIPAddress,
-  assumed_sessions.caller_arn AS true_human_actor
-FROM cloudtrail_logs ct
-JOIN assumed_sessions
-  ON ct.userIdentity.sessionContext.sessionIssuer.arn = assumed_sessions.assumed_session_arn
-WHERE ct.eventTime BETWEEN timestamp '2025-06-01 00:00:00' AND timestamp '2025-06-05 23:59:59'
-  AND ct.eventSource = 'cloudformation.amazonaws.com'
+  iam.eventTime,
+  iam.eventName,
+  iam.modified_role,
+  iam.target_account,
+  iam.role_arn AS session_used,
+  human.human_actor,
+  human.sourceIPAddress AS human_ip,
+  iam.sourceIPAddress AS action_ip
+FROM iam_changes iam
+JOIN human_to_23622_session human
+  ON iam.actor_session = human.deployment_session_arn
+ORDER BY iam.eventTime;

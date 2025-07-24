@@ -1,59 +1,33 @@
-WITH assume_chain AS (
+-- First, get the human actor and assumed session details
+WITH assumed_sessions AS (
   SELECT 
-    from_iso8601_timestamp(eventTime) AS assume_time,
-    json_extract_scalar(responseElements, '$.assumedRoleUser.arn') AS session_arn,
-    REGEXP_EXTRACT(json_extract_scalar(responseElements, '$.assumedRoleUser.arn'), 'assumed-role/([^/]+)') AS session_role_name,
+    eventTime,
+    userIdentity.sessionContext.sessionIssuer.arn AS role_arn,
     userIdentity.arn AS caller_arn,
-    REGEXP_EXTRACT(userIdentity.arn, 'assumed-role/([^/]+)') AS caller_role_name
-  FROM bcadfasfdas
+    userIdentity.sessionContext.sessionIssuer.userName AS role_name,
+    userIdentity.sessionContext.sessionIssuer.accountId AS account_id,
+    userIdentity.sessionContext.sessionIssuer.type AS issuer_type,
+    userIdentity.sessionContext.sessionIssuer.userName AS issuer_name,
+    userIdentity.sessionContext.sessionIssuer.arn AS assumed_session_arn,
+    sourceIPAddress,
+    eventName
+  FROM cloudtrail_logs
   WHERE eventName = 'AssumeRole'
-    AND day BETWEEN '2025/06/01' AND '2025/06/10'
-),
-
-iam_creations AS (
-  SELECT 
-    from_iso8601_timestamp(eventTime) AS event_time,
-    userIdentity.arn AS acting_session_arn,
-    REGEXP_EXTRACT(userIdentity.arn, 'assumed-role/([^/]+)') AS acting_role_name,
-    eventName,
-    requestParameters,
-    accountId
-  FROM bcadfasfdas
-  WHERE eventsource = 'iam.amazonaws.com'
-    AND eventname IN (
-        'CreateRole', 'PutRolePolicy', 'AttachRolePolicy',
-        'CreateUser', 'PutUserPolicy', 'AttachUserPolicy',
-        'CreateGroup', 'PutGroupPolicy', 'AttachGroupPolicy'
-    )
-    AND day BETWEEN '2025/06/01' AND '2025/06/10'
-),
-
-first_hop AS (
-  SELECT 
-    i.*,
-    a1.caller_arn AS intermediate_arn
-  FROM iam_creations i
-  LEFT JOIN assume_chain a1
-    ON i.acting_role_name = a1.session_role_name
-),
-
-final_hop AS (
-  SELECT 
-    f.*,
-    a2.caller_arn AS true_human_actor
-  FROM first_hop f
-  LEFT JOIN assume_chain a2
-    ON REGEXP_EXTRACT(f.intermediate_arn, 'assumed-role/([^/]+)') = a2.session_role_name
+    AND userIdentity.type = 'AssumedRole'
+    AND userIdentity.arn LIKE '%ad%' -- Your identifying tag
+    AND userIdentity.sessionContext.sessionIssuer.arn LIKE '%IAM%' -- optional filter
 )
 
+-- Then, use that to filter other events that use the same session ARN
 SELECT 
-  event_time,
-  eventName,
-  accountId,
-  acting_session_arn,
-  intermediate_arn,
-  true_human_actor
-FROM final_hop
-WHERE true_human_actor LIKE '%bankname%'
-ORDER BY event_time DESC
-LIMIT 100;
+  ct.eventTime,
+  ct.eventName,
+  ct.userIdentity.sessionContext.sessionIssuer.arn AS used_session_arn,
+  ct.userIdentity.arn AS actual_caller,
+  ct.sourceIPAddress,
+  assumed_sessions.caller_arn AS true_human_actor
+FROM cloudtrail_logs ct
+JOIN assumed_sessions
+  ON ct.userIdentity.sessionContext.sessionIssuer.arn = assumed_sessions.assumed_session_arn
+WHERE ct.eventTime BETWEEN timestamp '2025-06-01 00:00:00' AND timestamp '2025-06-05 23:59:59'
+  AND ct.eventSource = 'cloudformation.amazonaws.com'

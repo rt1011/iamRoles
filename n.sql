@@ -1,11 +1,11 @@
 WITH assume_chain AS (
   SELECT 
     from_iso8601_timestamp(eventTime) AS assume_time,
-    responseElements.assumedRoleUser.arn AS session_arn,
-    REGEXP_EXTRACT(responseElements.assumedRoleUser.arn, 'assumed-role/([^/]+)') AS session_role_name,
+    json_extract_scalar(responseElements, '$.assumedRoleUser.arn') AS session_arn,
+    REGEXP_EXTRACT(json_extract_scalar(responseElements, '$.assumedRoleUser.arn'), 'assumed-role/([^/]+)') AS session_role_name,
     userIdentity.arn AS caller_arn,
     REGEXP_EXTRACT(userIdentity.arn, 'assumed-role/([^/]+)') AS caller_role_name
-  FROM ab
+  FROM bcadfasfdas
   WHERE eventName = 'AssumeRole'
     AND day BETWEEN '2025/06/01' AND '2025/06/10'
 ),
@@ -18,7 +18,7 @@ iam_creations AS (
     eventName,
     requestParameters,
     accountId
-  FROM ab
+  FROM bcadfasfdas
   WHERE eventsource = 'iam.amazonaws.com'
     AND eventname IN (
         'CreateRole', 'PutRolePolicy', 'AttachRolePolicy',
@@ -28,7 +28,6 @@ iam_creations AS (
     AND day BETWEEN '2025/06/01' AND '2025/06/10'
 ),
 
--- Join IAM creation to the assumed session that created it
 first_hop AS (
   SELECT 
     i.*,
@@ -38,7 +37,6 @@ first_hop AS (
     ON i.acting_role_name = a1.session_role_name
 ),
 
--- Join intermediate role to the Entra user (caller_arn LIKE '%bankname%')
 final_hop AS (
   SELECT 
     f.*,

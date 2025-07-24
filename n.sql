@@ -8,7 +8,7 @@ WITH human_to_23622_session AS (
   FROM prod_cloudtrail_logs
   WHERE day = '2025-06-04'
     AND eventName = 'AssumeRole'
-    AND userIdentity.arn LIKE '%@epcusantander%'  -- or other SSO login marker
+    AND userIdentity.arn LIKE '%@epcuac%'  -- or other SSO login marker
     AND responseElements.assumedRoleUser.arn LIKE '%23622%'  -- session in security/automation account
 ),
 

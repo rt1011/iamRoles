@@ -1,46 +1,51 @@
-WITH assume_role_events AS (
-  SELECT
-    eventTime AS assumeTime,
-    json_extract_scalar(responseElements, '$.assumedRoleUser.arn') AS assumed_session_arn,
-    json_extract_scalar(responseElements, '$.roleArn') AS role_assumed,
-    userIdentity.arn AS caller_arn,
-    sourceIPAddress AS assume_ip
-  FROM "db"
+WITH assumed_roles AS (
+  SELECT 
+    eventID AS assume_event_id,
+    eventTime AS assume_time,
+    responseElements.assumedRoleUser.arn AS session_arn,
+    userIdentity.arn AS human_actor,
+    userIdentity.type AS actor_type,
+    userIdentity.sessionContext.sessionIssuer.arn AS assumed_role_arn
+  FROM a
   WHERE eventName = 'AssumeRole'
-    AND day BETWEEN '2025/06/01' AND '2025/06/04'
+    AND day BETWEEN DATE '2025-06-01' AND DATE '2025-06-10'
 ),
-iam_changes AS (
-  SELECT
-    eventTime AS actionTime,
+
+iam_creations AS (
+  SELECT 
+    eventTime,
+    eventID,
     eventName,
-    userIdentity.arn AS session_that_made_change,
-    json_extract_scalar(requestParameters, '$.roleName') AS role_modified,
-    sourceIPAddress AS action_ip
-  FROM "db"
-  WHERE eventSource = 'iam.amazonaws.com'
-    AND eventName IN (
-      'CreateRole', 'UpdateRole', 'DeleteRole',
-      'PutRolePolicy', 'DeleteRolePolicy',
-      'AttachRolePolicy', 'DetachRolePolicy'
+    userIdentity.principalId,
+    userIdentity.arn AS acting_session_arn,
+    userIdentity.sessionContext.sessionIssuer.arn AS issued_role_arn,
+    requestParameters,
+    sourceIPAddress,
+    awsRegion,
+    accountId
+  FROM a
+  WHERE eventsource = 'iam.amazonaws.com'
+    AND eventname IN (
+        'CreateRole', 'CreateUser', 'CreatePolicy', 'CreateGroup',
+        'PutRolePolicy', 'PutUserPolicy', 'PutGroupPolicy',
+        'AttachRolePolicy', 'AttachUserPolicy', 'AttachGroupPolicy'
     )
-    AND day BETWEEN '2025/06/01' AND '2025/06/04'
+    AND day BETWEEN DATE '2025-06-01' AND DATE '2025-06-10'
 )
 
-SELECT
-  ic.actionTime,
-  ic.eventName,
-  ic.role_modified,
-  ic.session_that_made_change,
-  ar1.caller_arn AS intermediate_actor,
-  ar1.assumeTime AS intermediate_assume_time,
-  ar1.assume_ip AS intermediate_ip,
-  ar2.caller_arn AS true_human_actor,
-  ar2.assumeTime AS human_assume_time,
-  ar2.assume_ip AS human_assume_ip
-FROM iam_changes ic
-LEFT JOIN assume_role_events ar1
-  ON ic.session_that_made_change = ar1.assumed_session_arn
-LEFT JOIN assume_role_events ar2
-  ON ar1.caller_arn = ar2.assumed_session_arn
-ORDER BY ic.actionTime DESC
-LIMIT 100;
+SELECT 
+  i.eventTime,
+  i.eventName,
+  i.accountId,
+  i.sourceIPAddress,
+  i.awsRegion,
+  i.requestParameters,
+  i.acting_session_arn,
+  a.human_actor AS true_actor,
+  a.actor_type,
+  a.assume_time AS role_assumed_at
+FROM iam_creations i
+LEFT JOIN assumed_roles a
+  ON i.acting_session_arn = a.session_arn
+  AND i.eventTime BETWEEN a.assume_time AND a.assume_time + interval '1' hour
+ORDER BY i.eventTime DESC;
